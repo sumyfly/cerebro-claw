@@ -7,14 +7,20 @@ export class BrainLoop {
 	private intervalMs: number;
 	private timer: ReturnType<typeof setInterval> | null = null;
 	private running = false;
+	private enabled: boolean;
 
-	constructor(store: MemoryStore, agent: AgentRuntime, intervalMs: number) {
+	constructor(store: MemoryStore, agent: AgentRuntime, intervalMs: number, enabled = true) {
 		this.store = store;
 		this.agent = agent;
 		this.intervalMs = intervalMs;
+		this.enabled = enabled;
 	}
 
 	start(): void {
+		if (!this.enabled) {
+			console.log("[brain-loop] Disabled (no ANTHROPIC_API_KEY). Set it to enable proactive mode.");
+			return;
+		}
 		if (this.timer) return;
 		console.log(`[brain-loop] Starting — cycle every ${this.intervalMs / 1000}s`);
 		this.timer = setInterval(() => this.cycle(), this.intervalMs);

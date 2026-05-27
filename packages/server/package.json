@@ -6,7 +6,9 @@
     "build": "tsc",
     "dev": "node --watch --import tsx src/index.ts",
     "start": "node dist/index.js",
-    "lint": "biome check src/"
+    "seed": "node --import tsx src/seed.ts",
+    "lint": "biome check src/",
+    "test": "vitest run"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

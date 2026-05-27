@@ -1,3 +1,6 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
+
 export interface ServerConfig {
 	port: number;
 	anthropicApiKey: string;
@@ -5,6 +8,7 @@ export interface ServerConfig {
 	larkAppSecret: string;
 	brainLoopIntervalMs: number;
 	model: string;
+	dbPath: string;
 }
 
 export function loadConfig(): ServerConfig {
@@ -15,5 +19,6 @@ export function loadConfig(): ServerConfig {
 		larkAppSecret: process.env.LARK_APP_SECRET ?? "",
 		brainLoopIntervalMs: Number(process.env.BRAIN_LOOP_INTERVAL_MS ?? 300_000),
 		model: process.env.MODEL ?? "claude-sonnet-4-20250514",
+		dbPath: process.env.DB_PATH ?? join(homedir(), ".cerebro-claw", "data.db"),
 	};
 }

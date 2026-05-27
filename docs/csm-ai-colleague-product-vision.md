@@ -376,3 +376,36 @@ Each extension uses Pi's `ExtensionAPI` to register tools, hook events, and add 
 | CLI tools via bash tool | Pi SDK | Pi's bash handles spawn, streaming, timeout, process management. |
 | Brain loop as an agent, not as rules | Pi SDK | The loop calls `agent.prompt()`. The LLM judges. Rules can't handle nuance. |
 | Router between channel and sessions | OpenClaw | Same customer from different channels → same session. |
+
+---
+
+## Milestone 1: The Agent Actually Works
+
+**Done when:** A CSM messages the agent in Lark, the agent knows the customer, and it proactively alerts when something needs attention.
+
+### What "done" looks like
+
+1. CSM messages Lark bot: "What's going on with Acme?" → Agent replies with customer context
+2. CSM tells bot: "Remember, Acme is evaluating a competitor" → Agent stores instinct, uses it in future reasoning
+3. CSM wakes up Monday to a Lark message from the agent → "Acme usage dropped 25% and they're evaluating alternatives. Draft check-in ready."
+4. CSM approves or rejects the draft from the admin UI
+
+### Tasks
+
+| # | Task | Package | Status |
+|---|---|---|---|
+| 1 | Add tests (memory, tools, router) | memory, tools, server | Done — 61 tests |
+| 2 | Connect Anthropic — agent actually calls Claude | server | Done — code ready, needs API key |
+| 3 | Add persistence — SQLite so data survives restarts | memory | Done |
+| 4 | Connect Lark — bot receives and sends messages | channel-lark, server | Done — code ready, needs Lark credentials |
+| 5 | Seed data — 3-5 demo customers with history and instincts | server | Done — 4 customers |
+| 6 | Test brain loop end-to-end with real LLM | server | Blocked — needs API key |
+| 7 | Polish admin UI — make it usable for the demo | web | Not started |
+
+### Out of scope for M1
+
+- Multi-channel (email, Slack)
+- CRM integration (HubSpot, Salesforce)
+- Customer-facing responses
+- Production deployment (Docker, CI/CD)
+- Authentication on admin UI

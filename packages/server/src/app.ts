@@ -1,6 +1,8 @@
 import express, { type Express } from "express";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import type { MemoryStore, PendingAction } from "@cerebro-claw/shared";
-import { InMemoryStore } from "@cerebro-claw/memory";
+import { SqliteStore } from "@cerebro-claw/memory";
 import { createMemoryTools, createMessageTools } from "@cerebro-claw/tools";
 import { LarkBot } from "@cerebro-claw/channel-lark";
 import { AgentRuntime } from "./agent-runtime.js";
@@ -13,8 +15,9 @@ export function createApp(): { app: Express; brainLoop: BrainLoop; store: Memory
 	const app = express();
 	app.use(express.json());
 
-	// Memory
-	const store: MemoryStore = new InMemoryStore();
+	// Memory (SQLite — data survives restarts)
+	mkdirSync(dirname(config.dbPath), { recursive: true });
+	const store: MemoryStore = new SqliteStore(config.dbPath);
 
 	// Pending actions (CSM approval queue)
 	const pendingActions = new Map<string, PendingAction>();
@@ -41,8 +44,8 @@ export function createApp(): { app: Express; brainLoop: BrainLoop; store: Memory
 	// Router
 	const router = new Router(agent);
 
-	// Brain loop
-	const brainLoop = new BrainLoop(store, agent, config.brainLoopIntervalMs);
+	// Brain loop (only runs if LLM is configured)
+	const brainLoop = new BrainLoop(store, agent, config.brainLoopIntervalMs, !!config.anthropicApiKey);
 
 	// Lark webhook
 	lark.onMessage(async (message) => {
