@@ -400,7 +400,7 @@ Each extension uses Pi's `ExtensionAPI` to register tools, hook events, and add 
 | 4 | Connect Lark — bot receives and sends messages | channel-lark, server | Done — code ready, needs Lark credentials |
 | 5 | Seed data — 3-5 demo customers with history and instincts | server | Done — 4 customers |
 | 6 | Test brain loop end-to-end with real LLM | server | Blocked — needs API key |
-| 7 | Polish admin UI — make it usable for the demo | web | Not started |
+| 7 | Polish admin UI — make it usable for the demo | web | Done |
 
 ### Out of scope for M1
 
