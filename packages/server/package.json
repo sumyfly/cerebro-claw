@@ -1,0 +1,25 @@
+{
+  "name": "@cerebro-claw/server",
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "node --watch --import tsx src/index.ts",
+    "start": "node dist/index.js",
+    "lint": "biome check src/"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@cerebro-claw/channel-lark": "workspace:*",
+    "@cerebro-claw/memory": "workspace:*",
+    "@cerebro-claw/shared": "workspace:*",
+    "@cerebro-claw/tools": "workspace:*",
+    "express": "^5.1.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^25.9.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
