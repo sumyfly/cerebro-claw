@@ -55,10 +55,11 @@ describe("Router", () => {
 	describe("handleMessage", () => {
 		it("calls agent with customer context when route exists", async () => {
 			router.addRoute("lark:user-456", { customerId: "acme", csmId: "sarah" });
-			await router.handleMessage(makeMessage());
+			await router.handleMessage(makeMessage(), "session-1");
 			expect(mockAgent.prompt).toHaveBeenCalledWith(
 				"What's going on with Acme?",
 				"Current customer: acme. CSM: sarah.",
+				"session-1",
 			);
 		});
 
@@ -67,6 +68,7 @@ describe("Router", () => {
 			expect(mockAgent.prompt).toHaveBeenCalledWith(
 				"What's going on with Acme?",
 				"No customer context — this is a direct message from a CSM.",
+				undefined,
 			);
 		});
 

@@ -23,14 +23,14 @@ export class Router {
 		return this.routes.get(key) ?? this.routes.get(`${message.channelType}:${message.channelId}`) ?? null;
 	}
 
-	async handleMessage(message: InboundMessage): Promise<string> {
+	async handleMessage(message: InboundMessage, sessionId?: string): Promise<string> {
 		const route = this.resolve(message);
 
 		const context = route
 			? `Current customer: ${route.customerId}. CSM: ${route.csmId}.`
 			: "No customer context — this is a direct message from a CSM.";
 
-		const response = await this.agent.prompt(message.text, context);
+		const response = await this.agent.prompt(message.text, context, sessionId);
 		return response.text;
 	}
 }

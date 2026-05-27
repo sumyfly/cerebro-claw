@@ -4,7 +4,7 @@ import { dirname } from "node:path";
 import type { MemoryStore, PendingAction } from "@cerebro-claw/shared";
 import { SqliteStore } from "@cerebro-claw/memory";
 import { createMemoryTools, createMessageTools } from "@cerebro-claw/tools";
-import { LarkBot } from "@cerebro-claw/channel-lark";
+import { LarkBot, buildApprovalCard } from "@cerebro-claw/channel-lark";
 import { AgentRuntime } from "./agent-runtime.js";
 import { Router } from "./router.js";
 import { BrainLoop } from "./brain-loop.js";
@@ -47,11 +47,28 @@ export function createApp(): { app: Express; brainLoop: BrainLoop; store: Memory
 	// Brain loop (only runs if LLM is configured)
 	const brainLoop = new BrainLoop(store, agent, config.brainLoopIntervalMs, !!config.anthropicApiKey);
 
-	// Lark webhook
+	// Lark webhook — message handler
 	lark.onMessage(async (message) => {
-		const reply = await router.handleMessage(message);
+		const sessionId = `lark:${message.senderId}`;
+		const reply = await router.handleMessage(message, sessionId);
 		if (reply) {
 			await lark.sendMessage(message.channelId, reply);
+		}
+	});
+
+	// Lark card action handler (approve/reject from interactive cards)
+	lark.onCardAction(async (tag, value, _userId) => {
+		const actionId = value.id;
+		const action = pendingActions.get(actionId);
+		if (!action) return;
+
+		if (value.action === "approve") {
+			action.status = "approved";
+			if (action.draft) {
+				await lark.sendMessageToUser(action.draft.recipientId, action.draft.text);
+			}
+		} else if (value.action === "reject") {
+			action.status = "rejected";
 		}
 	});
 
@@ -156,10 +173,31 @@ export function createApp(): { app: Express; brainLoop: BrainLoop; store: Memory
 
 	// Chat (assistant mode — CSM talks to agent directly)
 	app.post("/api/chat", async (req, res) => {
-		const { message, customerId } = req.body;
+		const { message, customerId, sessionId } = req.body;
+		const chatSessionId = sessionId ?? (customerId ? `chat:${customerId}` : "chat:general");
 		const context = customerId ? `Current customer context: ${customerId}` : undefined;
-		const response = await agent.prompt(message, context);
-		res.json({ text: response.text, toolCalls: response.toolCalls });
+		const response = await agent.prompt(message, context, chatSessionId);
+		res.json({ text: response.text, toolCalls: response.toolCalls, sessionId: chatSessionId });
+	});
+
+	// Daily digest
+	app.post("/api/digest", async (_req, res) => {
+		try {
+			const digest = await brainLoop.runDigest();
+			res.json({ text: digest });
+		} catch (err) {
+			res.status(500).json({ error: "Failed to generate digest. Is ANTHROPIC_API_KEY set?" });
+		}
+	});
+
+	// Session management
+	app.get("/api/sessions", (_req, res) => {
+		res.json(agent.listSessions());
+	});
+
+	app.delete("/api/sessions/:id", (req, res) => {
+		agent.clearSession(req.params.id);
+		res.json({ ok: true });
 	});
 
 	return { app, brainLoop, store };

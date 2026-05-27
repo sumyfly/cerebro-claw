@@ -6,12 +6,14 @@ export interface LarkConfig {
 }
 
 export type MessageHandler = (message: InboundMessage) => Promise<void>;
+export type CardActionHandler = (actionId: string, actionValue: Record<string, string>, userId: string) => Promise<void>;
 
 export class LarkBot {
 	private config: LarkConfig;
 	private accessToken: string | null = null;
 	private tokenExpiresAt = 0;
 	private handler: MessageHandler | null = null;
+	private cardActionHandler: CardActionHandler | null = null;
 
 	constructor(config: LarkConfig) {
 		this.config = config;
@@ -21,13 +23,31 @@ export class LarkBot {
 		this.handler = handler;
 	}
 
+	onCardAction(handler: CardActionHandler): void {
+		this.cardActionHandler = handler;
+	}
+
 	async handleWebhook(body: Record<string, unknown>): Promise<Record<string, unknown> | null> {
-		// Lark URL verification challenge
 		if (body.type === "url_verification") {
 			return { challenge: body.challenge };
 		}
 
 		const header = body.header as Record<string, unknown> | undefined;
+
+		// Interactive card action callback
+		if (header?.event_type === "card.action.trigger") {
+			const event = body.event as Record<string, unknown>;
+			const action = event.action as Record<string, unknown>;
+			const actionValue = action.value as Record<string, string>;
+			const operator = event.operator as Record<string, unknown>;
+			const userId = (operator?.open_id as string) ?? "";
+
+			if (this.cardActionHandler) {
+				await this.cardActionHandler(action.tag as string, actionValue, userId);
+			}
+			return { ok: true };
+		}
+
 		if (header?.event_type === "im.message.receive_v1") {
 			const event = body.event as Record<string, unknown>;
 			const sender = event.sender as Record<string, unknown>;
@@ -94,6 +114,28 @@ export class LarkBot {
 		}
 	}
 
+	async sendInteractiveCard(userId: string, card: LarkCard): Promise<void> {
+		const token = await this.getAccessToken();
+		const resp = await fetch(
+			"https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=open_id",
+			{
+				method: "POST",
+				headers: {
+					Authorization: `Bearer ${token}`,
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify({
+					receive_id: userId,
+					msg_type: "interactive",
+					content: JSON.stringify(card),
+				}),
+			},
+		);
+		if (!resp.ok) {
+			throw new Error(`Lark API error: ${resp.status} ${await resp.text()}`);
+		}
+	}
+
 	private async getAccessToken(): Promise<string> {
 		if (this.accessToken && Date.now() < this.tokenExpiresAt) {
 			return this.accessToken;
@@ -118,4 +160,55 @@ export class LarkBot {
 		this.tokenExpiresAt = Date.now() + data.expire * 1000 - 60_000;
 		return this.accessToken;
 	}
+}
+
+export interface LarkCard {
+	config?: { wide_screen_mode?: boolean };
+	header?: { title: { tag: string; content: string }; template?: string };
+	elements: LarkCardElement[];
+}
+
+export type LarkCardElement =
+	| { tag: "div"; text: { tag: string; content: string } }
+	| { tag: "hr" }
+	| { tag: "action"; actions: LarkCardAction[] };
+
+export interface LarkCardAction {
+	tag: "button";
+	text: { tag: string; content: string };
+	type: "primary" | "danger" | "default";
+	value: Record<string, string>;
+}
+
+export function buildApprovalCard(actionId: string, customerName: string, description: string, draftText: string): LarkCard {
+	return {
+		config: { wide_screen_mode: true },
+		header: {
+			title: { tag: "plain_text", content: `Action needed: ${customerName}` },
+			template: "orange",
+		},
+		elements: [
+			{ tag: "div", text: { tag: "plain_text", content: description } },
+			{ tag: "hr" },
+			{ tag: "div", text: { tag: "lark_md", content: `**Draft:**\n${draftText}` } },
+			{ tag: "hr" },
+			{
+				tag: "action",
+				actions: [
+					{
+						tag: "button",
+						text: { tag: "plain_text", content: "Approve & Send" },
+						type: "primary",
+						value: { action: "approve", id: actionId },
+					},
+					{
+						tag: "button",
+						text: { tag: "plain_text", content: "Reject" },
+						type: "danger",
+						value: { action: "reject", id: actionId },
+					},
+				],
+			},
+		],
+	};
 }

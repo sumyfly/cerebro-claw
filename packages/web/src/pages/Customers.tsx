@@ -47,7 +47,7 @@ export function Customers() {
 	const [customers, setCustomers] = useState<CustomerSummary[]>([]);
 	const [selected, setSelected] = useState<CustomerDetail | null>(null);
 	const [chatInput, setChatInput] = useState("");
-	const [chatReply, setChatReply] = useState("");
+	const [chatHistory, setChatHistory] = useState<{ role: string; text: string }[]>([]);
 	const [chatLoading, setChatLoading] = useState(false);
 	const [addModalOpen, setAddModalOpen] = useState(false);
 	const [form] = Form.useForm();
@@ -71,6 +71,8 @@ export function Customers() {
 
 	function selectCustomer(id: string) {
 		setSearchParams({ id });
+		setChatHistory([]);
+		setChatInput("");
 		fetch(`/api/customers/${id}`)
 			.then((r) => r.json())
 			.then(setSelected)
@@ -79,20 +81,21 @@ export function Customers() {
 
 	async function sendChat() {
 		if (!chatInput.trim()) return;
+		const userMsg = chatInput;
+		setChatInput("");
+		setChatHistory((h) => [...h, { role: "user", text: userMsg }]);
 		setChatLoading(true);
-		setChatReply("");
 		try {
 			const res = await fetch("/api/chat", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ message: chatInput, customerId: selected?.profile.id }),
+				body: JSON.stringify({ message: userMsg, customerId: selected?.profile.id }),
 			});
 			const data = await res.json();
-			setChatReply(data.text);
-		} catch (err) {
-			setChatReply("Error: Could not reach the agent. Is ANTHROPIC_API_KEY set?");
+			setChatHistory((h) => [...h, { role: "assistant", text: data.text }]);
+		} catch {
+			setChatHistory((h) => [...h, { role: "assistant", text: "Error: Could not reach the agent. Is ANTHROPIC_API_KEY set?" }]);
 		}
-		setChatInput("");
 		setChatLoading(false);
 	}
 
@@ -255,7 +258,43 @@ export function Customers() {
 								]}
 							/>
 
-							<Card title="Ask the Agent" size="small">
+							<Card
+								title="Ask the Agent"
+								size="small"
+								extra={
+									chatHistory.length > 0 ? (
+										<Button size="small" onClick={() => setChatHistory([])}>
+											Clear
+										</Button>
+									) : null
+								}
+							>
+								<div style={{ maxHeight: 300, overflowY: "auto", marginBottom: 12 }}>
+									{chatHistory.map((msg, i) => (
+										<div
+											key={i}
+											style={{
+												padding: "8px 12px",
+												marginBottom: 8,
+												borderRadius: 8,
+												background: msg.role === "user" ? "#e6f4ff" : "#f6ffed",
+												textAlign: msg.role === "user" ? "right" : "left",
+												whiteSpace: "pre-wrap",
+											}}
+										>
+											<Typography.Text type="secondary" style={{ fontSize: 11 }}>
+												{msg.role === "user" ? "You" : "Agent"}
+											</Typography.Text>
+											<br />
+											{msg.text}
+										</div>
+									))}
+									{chatLoading && (
+										<div style={{ padding: "8px 12px", color: "#8c8c8c" }}>
+											Agent is thinking...
+										</div>
+									)}
+								</div>
 								<Space.Compact style={{ width: "100%" }}>
 									<Input
 										value={chatInput}
@@ -268,14 +307,6 @@ export function Customers() {
 										Send
 									</Button>
 								</Space.Compact>
-								{chatReply && (
-									<Card
-										size="small"
-										style={{ marginTop: 12, background: "#fafafa", whiteSpace: "pre-wrap" }}
-									>
-										{chatReply}
-									</Card>
-								)}
 							</Card>
 						</Space>
 					) : (

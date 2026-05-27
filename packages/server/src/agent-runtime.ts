@@ -23,12 +23,14 @@ Rules:
 - Use send_message to alert the CSM about things that need attention.
 - Use memory tools to read and update customer information.
 - When you notice something concerning (usage drop, missed follow-up, approaching renewal), alert the CSM with context and a recommendation.
+- When the CSM tells you to remember something about a customer (e.g. "remember, Acme is price-sensitive"), use memory_instinct to store it. You don't need to be told explicitly — if the CSM shares informal knowledge about a customer, capture it.
 - Be concise. CSMs are busy.`;
 
 export class AgentRuntime {
 	private client: Anthropic;
 	private model: string;
 	private tools: ToolDefinition[];
+	private sessions = new Map<string, Anthropic.MessageParam[]>();
 
 	constructor(apiKey: string, model: string, tools: ToolDefinition[]) {
 		this.client = new Anthropic({ apiKey });
@@ -36,7 +38,22 @@ export class AgentRuntime {
 		this.tools = tools;
 	}
 
-	async prompt(userMessage: string, context?: string): Promise<AgentResponse> {
+	getOrCreateSession(sessionId: string): Anthropic.MessageParam[] {
+		if (!this.sessions.has(sessionId)) {
+			this.sessions.set(sessionId, []);
+		}
+		return this.sessions.get(sessionId)!;
+	}
+
+	clearSession(sessionId: string): void {
+		this.sessions.delete(sessionId);
+	}
+
+	listSessions(): string[] {
+		return Array.from(this.sessions.keys());
+	}
+
+	async prompt(userMessage: string, context?: string, sessionId?: string): Promise<AgentResponse> {
 		const systemPrompt = context ? `${SYSTEM_PROMPT}\n\n${context}` : SYSTEM_PROMPT;
 
 		const anthropicTools: Anthropic.Tool[] = this.tools.map((t) => ({
@@ -45,7 +62,11 @@ export class AgentRuntime {
 			input_schema: t.parameters as Anthropic.Tool.InputSchema,
 		}));
 
-		const messages: Anthropic.MessageParam[] = [{ role: "user", content: userMessage }];
+		const history = sessionId ? this.getOrCreateSession(sessionId) : [];
+		const messages: Anthropic.MessageParam[] = [
+			...history,
+			{ role: "user", content: userMessage },
+		];
 
 		const toolCalls: AgentToolCall[] = [];
 		let responseText = "";
@@ -105,6 +126,18 @@ export class AgentRuntime {
 
 			if (response.stop_reason === "end_turn") {
 				continueLoop = false;
+			}
+		}
+
+		// Save conversation history for this session
+		if (sessionId) {
+			// Add the user message and final assistant response
+			history.push({ role: "user", content: userMessage });
+			history.push({ role: "assistant", content: responseText });
+
+			// Trim history to last 40 messages to keep context manageable
+			if (history.length > 40) {
+				history.splice(0, history.length - 40);
 			}
 		}
 

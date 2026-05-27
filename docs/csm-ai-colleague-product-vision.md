@@ -409,3 +409,25 @@ Each extension uses Pi's `ExtensionAPI` to register tools, hook events, and add 
 - Customer-facing responses
 - Production deployment (Docker, CI/CD)
 - Authentication on admin UI
+
+---
+
+## Milestone 2: The Agent Remembers Conversations
+
+**Done when:** You can have a multi-turn conversation with the agent about a customer, and it remembers what you discussed. Drafts can be approved directly in Lark. The agent sends a daily digest.
+
+### Tasks
+
+| # | Task | Status |
+|---|---|---|
+| 1 | Conversation history per session | Done — sessions stored in agent runtime, trimmed to 40 messages |
+| 2 | Lark interactive cards | Done — approval cards with Approve/Reject buttons, card action handler |
+| 3 | Daily digest brief | Done — `POST /api/digest` generates a full portfolio briefing |
+| 4 | Instinct capture from chat | Done — system prompt instructs agent to auto-capture informal knowledge |
+
+### Out of scope for M2
+
+- Multi-channel
+- CRM integration
+- Authentication
+- Production deployment
