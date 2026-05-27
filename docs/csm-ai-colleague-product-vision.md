@@ -232,3 +232,147 @@ Nothing to install. Nothing to learn. Nothing to open.
 | What does the CSM install? | Nothing |
 | Where do they use it? | Lark (or email) |
 | What does it feel like? | A new teammate who does all the grunt work |
+
+---
+
+## Architecture
+
+### Tech References
+
+- [Pi SDK](https://github.com/earendil-works/pi) — agent runtime, tool system, extension system
+- [OpenClaw](https://github.com/openclaw/openclaw) — session-per-customer, channel routing, gateway patterns
+- [Paseo](https://github.com/getpaseo/paseo) — remote agent orchestration, process model
+
+### Six Modules
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Cerebro Claw Server                   │
+│                                                         │
+│  ┌───────────────────────────────────────────────────┐  │
+│  │              Channel Layer (modular)               │  │
+│  │  ┌──────────┐  ┌───────┐  ┌───────┐              │  │
+│  │  │ Lark Bot │  │ Email │  │  ...  │  (future)    │  │
+│  │  └────┬─────┘  └───┬───┘  └───┬───┘              │  │
+│  └───────┼─────────────┼─────────┼───────────────────┘  │
+│          │             │         │                       │
+│          ▼             ▼         ▼                       │
+│  ┌───────────────────────────────────────────────────┐  │
+│  │              Router (OpenClaw pattern)             │  │
+│  │         channel + account → customer session       │  │
+│  └───────────────────────┬───────────────────────────┘  │
+│                          │                              │
+│          ┌───────────────┼───────────────┐              │
+│          ▼               ▼               ▼              │
+│  ┌──────────────┐ ┌────────────┐ ┌──────────────┐      │
+│  │   Customer   │ │   Agent    │ │    Brain     │      │
+│  │   Memory     │ │  Runtime   │ │    Loop      │      │
+│  │              │ │ (Pi SDK)   │ │ (scheduler)  │      │
+│  │ • profile    │ │            │ │              │      │
+│  │ • history    │ │ • session  │ │ • scan       │      │
+│  │ • state      │ │ • tools    │ │ • judge      │      │
+│  │ • instinct   │ │ • LLM     │ │ • act/alert  │      │
+│  └──────┬───────┘ └─────┬──────┘ └──────┬───────┘      │
+│         │               │               │               │
+│         └───────────────┼───────────────┘               │
+│                         ▼                               │
+│  ┌───────────────────────────────────────────────────┐  │
+│  │              Tool Layer (Pi tool system)           │  │
+│  │                                                   │  │
+│  │  Built-in:        Custom:         CLI:            │  │
+│  │  • read           • crm_lookup    • bash          │  │
+│  │  • write          • crm_update    • any CLI tool  │  │
+│  │  • grep           • ticket_search │               │  │
+│  │  • find           • usage_query   │               │  │
+│  │                   • draft_message │               │  │
+│  └───────────────────────────────────────────────────┘  │
+│                                                         │
+│  ┌───────────────────────────────────────────────────┐  │
+│  │              Extension Layer (Pi extensions)       │  │
+│  │  • lark-channel    • crm-hubspot  • playbooks     │  │
+│  │  • email-channel   • crm-salesforce               │  │
+│  │  • health-scorer   • ticket-zendesk               │  │
+│  └───────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────┘
+```
+
+#### 1. Agent Runtime (Pi SDK)
+
+Built on `@earendil-works/pi-agent-core`. This gives us:
+- The agent loop (prompt → LLM → tool calls → results → repeat)
+- Tool execution (sequential + parallel)
+- Steering (inject messages mid-turn) and follow-up (queue after turn)
+- Event system (25+ lifecycle events for extensions to hook)
+
+Use `@earendil-works/pi-ai` for multi-provider LLM support — start with Claude, swap later without changing code.
+
+We build on `pi-agent-core`, not `pi-coding-agent`. We're not a coding agent — we need the loop + tools, not the TUI/file editing layer.
+
+#### 2. Customer Memory
+
+Four layers, each stored differently:
+
+| Layer | Storage | Why |
+|---|---|---|
+| Profile | Structured DB (Postgres/SQLite) | Queryable, relational |
+| History | Append-only log + vector embeddings | Searchable by meaning |
+| State | Structured DB (same as profile) | Updated frequently by brain loop |
+| Instinct | Vector store + raw text | CSM's words, retrieved by semantic relevance |
+
+Exposed to the agent as tools: `memory_read`, `memory_search`, `memory_update`, `memory_instinct`.
+
+#### 3. Brain Loop (scheduler)
+
+Runs on a schedule. The loop itself is a Pi agent session — the LLM decides what to do, not hardcoded rules.
+
+```
+every cycle:
+  for each customer:
+    load memory (all 4 layers)
+    build context for LLM
+    call agent.prompt("What needs doing for {customer}?")
+    agent uses tools to check state, judge, act/alert
+```
+
+#### 4. Channel Layer (modular, OpenClaw pattern)
+
+Each channel is a Pi **extension** that registers:
+- An inbound handler (message from Lark → routed to customer session)
+- An outbound action (agent sends message → Lark API)
+
+Lark is the first extension. The interface is clean enough to add email, Slack later without touching core.
+
+#### 5. Tool Layer (Pi tool system + CLI)
+
+Three categories:
+
+**Built-in** — Pi's file tools (read, write, grep, find). The agent can read local files, configs, playbooks.
+
+**Custom CSM tools** — defined as Pi `ToolDefinition` with TypeBox schemas:
+- `crm_lookup` / `crm_update` — customer records
+- `ticket_search` — find open tickets
+- `usage_query` — pull usage metrics
+- `draft_message` / `send_message` — prepare and send messages (send requires approval)
+
+**CLI tools** — Pi's `bash` tool with pluggable `BashOperations`. The agent can run any CLI command: curl an API, run a script, query a database. No need to wrap every external tool as a custom integration.
+
+#### 6. Extension Layer (Pi extension system)
+
+Everything pluggable is an extension:
+- Channel adapters (lark, email, slack)
+- CRM connectors (hubspot, salesforce)
+- Ticketing connectors (zendesk, intercom)
+- Custom behaviors (health scoring, playbook runner)
+
+Each extension uses Pi's `ExtensionAPI` to register tools, hook events, and add commands.
+
+### Key Design Decisions
+
+| Decision | Reference | Why |
+|---|---|---|
+| Build on `pi-agent-core`, not `pi-coding-agent` | Pi SDK | We're not a coding agent. We need the loop + tools, not the TUI. |
+| One agent session per customer | OpenClaw | Session = customer relationship. Context persists. |
+| Channel as extension, not hardcoded | OpenClaw | Start with one, add more without touching core. |
+| CLI tools via bash tool | Pi SDK | Pi's bash handles spawn, streaming, timeout, process management. |
+| Brain loop as an agent, not as rules | Pi SDK | The loop calls `agent.prompt()`. The LLM judges. Rules can't handle nuance. |
+| Router between channel and sessions | OpenClaw | Same customer from different channels → same session. |
