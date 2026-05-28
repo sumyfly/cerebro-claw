@@ -3,7 +3,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { MemoryStore, PendingAction } from "@cerebro-claw/shared";
 import { SqliteStore } from "@cerebro-claw/memory";
-import { createMemoryTools, createMessageTools } from "@cerebro-claw/tools";
+import { createMemoryTools, createMessageTools, createBashTool, DEFAULT_ALLOWLIST } from "@cerebro-claw/tools";
 import { LarkBot, buildApprovalCard } from "@cerebro-claw/channel-lark";
 import { AgentRuntime } from "./agent-runtime.js";
 import { Router } from "./router.js";
@@ -36,7 +36,11 @@ export function createApp(): { app: Express; brainLoop: BrainLoop; store: Memory
 			await lark.sendMessageToUser(recipientId, text);
 		},
 	});
-	const allTools = [...memoryTools, ...messageTools];
+	const bashTool = createBashTool({
+		allowlist: config.bashAllowlist,
+		timeoutMs: config.bashTimeoutMs,
+	});
+	const allTools = [...memoryTools, ...messageTools, bashTool];
 
 	// Agent runtime
 	const agent = new AgentRuntime(config.anthropicApiKey, config.model, allTools);

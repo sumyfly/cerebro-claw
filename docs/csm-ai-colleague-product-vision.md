@@ -431,3 +431,29 @@ Each extension uses Pi's `ExtensionAPI` to register tools, hook events, and add 
 - CRM integration
 - Authentication
 - Production deployment
+
+---
+
+## Milestone 3: The Agent Gets Real Data
+
+**Done when:** The agent can pull live data from at least one real source (CRM, usage metrics, or tickets) instead of relying only on seeded memory. It can also run arbitrary CLI commands the operator allows.
+
+### Why this matters
+
+Right now the agent reasons about memory it stored itself. It can't see real customer activity. Connecting one real data source turns the prototype into a working assistant.
+
+### Tasks
+
+| # | Task | Why |
+|---|---|---|
+| 1 | `bash` tool — agent runs allowlisted CLI commands | The architecture's core promise (Pi SDK pattern). Lets you plug in any data source as a CLI. |
+| 2 | Usage data connector | Detect real drops, not seeded ones |
+| 3 | CRM connector (one provider — HubSpot or Salesforce) | Real customer records |
+| 4 | Ticket search connector | Read live support tickets |
+| 5 | Tool allowlist + safety (timeout, env restriction) | Don't let the agent `rm -rf /` |
+
+### Out of scope for M3
+
+- Auth on admin UI (M4)
+- Multi-channel (later)
+- Production deployment (M4)
