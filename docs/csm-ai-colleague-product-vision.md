@@ -457,3 +457,34 @@ Right now the agent reasons about memory it stored itself. It can't see real cus
 - Auth on admin UI (M4)
 - Multi-channel (later)
 - Production deployment (M4)
+
+---
+
+## Architecture Foundation: Extension System (MVP)
+
+**The application architecture from CLAUDE.md is now fully wired up.**
+
+Previously the architecture diagram showed an Extension Layer with channel adapters and tool plugins, but in code everything was hardcoded into `app.ts`. The MVP changes that:
+
+### What was built
+
+| Piece | Where | What it does |
+|---|---|---|
+| `ChannelAdapter` interface | `shared/types/extension.ts` | Contract every channel implements: `type`, `start`, `send`, optional `sendCard`/`stop` |
+| `ExtensionAPI` / `Extension` types | `shared/types/extension.ts` | What extensions can register: tools, channels, event handlers |
+| `ExtensionHost` | `server/src/extension-host.ts` | Loader + registry. Aggregates tools/channels, fires lifecycle events, handles shutdown |
+| `ChannelSender` lookup | `extension-host.ts` | Lets tools send messages via any registered channel without knowing the implementation |
+| 4 built-in extensions | `server/src/builtin-extensions/` | `memory-tools`, `message-tools`, `bash-tool`, `channel-lark` — all loaded uniformly |
+| Graceful shutdown | `server/src/index.ts` | SIGTERM/SIGINT stops brain loop, runs channel stop hooks, closes DB |
+| Health endpoint with introspection | `app.ts` | `/health` and `/api/extensions` show loaded extensions, channels, tools |
+
+### Why it matters
+
+Adding a second channel (email, Slack) or a CRM connector no longer requires editing `app.ts`. You just:
+
+1. Create a new extension file (anywhere)
+2. Implement `Extension { id, factory }`
+3. Register tools/channels via the API
+4. Add it to the host's `load()` call
+
+The MVP is complete: **all six modules from CLAUDE.md are now real, not aspirational.**

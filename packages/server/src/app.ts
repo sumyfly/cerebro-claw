@@ -3,89 +3,97 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { MemoryStore, PendingAction } from "@cerebro-claw/shared";
 import { SqliteStore } from "@cerebro-claw/memory";
-import { createMemoryTools, createMessageTools, createBashTool, DEFAULT_ALLOWLIST } from "@cerebro-claw/tools";
-import { LarkBot, buildApprovalCard } from "@cerebro-claw/channel-lark";
 import { AgentRuntime } from "./agent-runtime.js";
 import { Router } from "./router.js";
 import { BrainLoop } from "./brain-loop.js";
 import { loadConfig } from "./config.js";
+import { ExtensionHost } from "./extension-host.js";
+import { createLarkExtension } from "./builtin-extensions/lark-extension.js";
+import { memoryToolsExtension } from "./builtin-extensions/memory-tools-extension.js";
+import { createMessageToolsExtension } from "./builtin-extensions/message-tools-extension.js";
+import { createBashToolExtension } from "./builtin-extensions/bash-tool-extension.js";
 
-export function createApp(): { app: Express; brainLoop: BrainLoop; store: MemoryStore } {
+export interface AppHandles {
+	app: Express;
+	brainLoop: BrainLoop;
+	store: MemoryStore;
+	host: ExtensionHost;
+	shutdown: () => Promise<void>;
+}
+
+export async function createApp(): Promise<AppHandles> {
 	const config = loadConfig();
 	const app = express();
 	app.use(express.json());
 
-	// Memory (SQLite — data survives restarts)
+	// Memory (SQLite — survives restarts)
 	mkdirSync(dirname(config.dbPath), { recursive: true });
 	const store: MemoryStore = new SqliteStore(config.dbPath);
 
-	// Pending actions (CSM approval queue)
+	// Pending actions queue (shared across extensions)
 	const pendingActions = new Map<string, PendingAction>();
 
-	// Lark channel
-	const lark = new LarkBot({
+	// Extension host — collects tools, channels, and event handlers
+	const host = new ExtensionHost({
+		store,
+		config: { dbPath: config.dbPath, model: config.model },
+	});
+
+	// Lark extension also returns the bot for webhook handling
+	const lark = createLarkExtension({
 		appId: config.larkAppId,
 		appSecret: config.larkAppSecret,
-	});
-
-	// Tools
-	const memoryTools = createMemoryTools(store);
-	const messageTools = createMessageTools({
 		pendingActions,
-		async sendToChannel(_channelId, recipientId, text) {
-			await lark.sendMessageToUser(recipientId, text);
+		onMessage: async (text, senderId, _channelId) => {
+			const sessionId = `lark:${senderId}`;
+			return await router.handleMessage(
+				{
+					channelType: "lark",
+					channelId: _channelId,
+					senderId,
+					senderName: senderId,
+					text,
+					timestamp: new Date(),
+				},
+				sessionId,
+			);
 		},
 	});
-	const bashTool = createBashTool({
-		allowlist: config.bashAllowlist,
-		timeoutMs: config.bashTimeoutMs,
-	});
-	const allTools = [...memoryTools, ...messageTools, bashTool];
 
-	// Agent runtime
-	const agent = new AgentRuntime(config.anthropicApiKey, config.model, allTools);
+	// Load all extensions (built-in + future user-provided)
+	await host.load([
+		memoryToolsExtension,
+		createMessageToolsExtension({ pendingActions, host }),
+		createBashToolExtension({
+			allowlist: config.bashAllowlist,
+			timeoutMs: config.bashTimeoutMs,
+		}),
+		lark.extension,
+	]);
 
-	// Router
+	// Agent runtime uses tools collected from extensions
+	const agent = new AgentRuntime(config.anthropicApiKey, config.model, host.getTools());
+
+	// Router and brain loop
 	const router = new Router(agent);
-
-	// Brain loop (only runs if LLM is configured)
 	const brainLoop = new BrainLoop(store, agent, config.brainLoopIntervalMs, !!config.anthropicApiKey);
-
-	// Lark webhook — message handler
-	lark.onMessage(async (message) => {
-		const sessionId = `lark:${message.senderId}`;
-		const reply = await router.handleMessage(message, sessionId);
-		if (reply) {
-			await lark.sendMessage(message.channelId, reply);
-		}
-	});
-
-	// Lark card action handler (approve/reject from interactive cards)
-	lark.onCardAction(async (tag, value, _userId) => {
-		const actionId = value.id;
-		const action = pendingActions.get(actionId);
-		if (!action) return;
-
-		if (value.action === "approve") {
-			action.status = "approved";
-			if (action.draft) {
-				await lark.sendMessageToUser(action.draft.recipientId, action.draft.text);
-			}
-		} else if (value.action === "reject") {
-			action.status = "rejected";
-		}
-	});
 
 	// --- HTTP Routes ---
 
 	app.get("/health", (_req, res) => {
-		res.json({ status: "ok", uptime: process.uptime() });
+		res.json({
+			status: "ok",
+			uptime: process.uptime(),
+			extensions: host.getLoadedExtensions(),
+			channels: host.getChannels().map((c) => c.type),
+			tools: host.getTools().map((t) => t.name),
+		});
 	});
 
-	// Lark event webhook
+	// Lark webhook
 	app.post("/webhook/lark", async (req, res) => {
 		try {
-			const result = await lark.handleWebhook(req.body);
+			const result = await lark.bot.handleWebhook(req.body);
 			res.json(result ?? { ok: true });
 		} catch (err) {
 			console.error("[webhook/lark] Error:", err);
@@ -95,7 +103,6 @@ export function createApp(): { app: Express; brainLoop: BrainLoop; store: Memory
 
 	// --- API Routes (for admin web UI) ---
 
-	// Customers
 	app.get("/api/customers", async (_req, res) => {
 		const profiles = await store.listProfiles();
 		const customers = await Promise.all(
@@ -135,24 +142,21 @@ export function createApp(): { app: Express; brainLoop: BrainLoop; store: Memory
 		res.status(201).json(profile);
 	});
 
-	// History
 	app.get("/api/customers/:id/history", async (req, res) => {
 		const history = await store.getHistory(req.params.id, 100);
 		res.json(history);
 	});
 
-	// Instincts
 	app.get("/api/customers/:id/instincts", async (req, res) => {
 		const instincts = await store.getInstincts(req.params.id);
 		res.json(instincts);
 	});
 
-	// Pending actions
 	app.get("/api/actions", (_req, res) => {
 		res.json(Array.from(pendingActions.values()));
 	});
 
-	app.post("/api/actions/:id/approve", (req, res) => {
+	app.post("/api/actions/:id/approve", async (req, res) => {
 		const action = pendingActions.get(req.params.id);
 		if (!action) {
 			res.status(404).json({ error: "Not found" });
@@ -160,7 +164,8 @@ export function createApp(): { app: Express; brainLoop: BrainLoop; store: Memory
 		}
 		action.status = "approved";
 		if (action.draft) {
-			lark.sendMessageToUser(action.draft.recipientId, action.draft.text).catch(console.error);
+			const sender = host.getChannelSender(action.draft.channelType);
+			if (sender) await sender.send(action.draft.recipientId, action.draft.text);
 		}
 		res.json(action);
 	});
@@ -175,7 +180,7 @@ export function createApp(): { app: Express; brainLoop: BrainLoop; store: Memory
 		res.json(action);
 	});
 
-	// Chat (assistant mode — CSM talks to agent directly)
+	// Chat
 	app.post("/api/chat", async (req, res) => {
 		const { message, customerId, sessionId } = req.body;
 		const chatSessionId = sessionId ?? (customerId ? `chat:${customerId}` : "chat:general");
@@ -184,7 +189,6 @@ export function createApp(): { app: Express; brainLoop: BrainLoop; store: Memory
 		res.json({ text: response.text, toolCalls: response.toolCalls, sessionId: chatSessionId });
 	});
 
-	// Daily digest
 	app.post("/api/digest", async (_req, res) => {
 		try {
 			const digest = await brainLoop.runDigest();
@@ -194,7 +198,6 @@ export function createApp(): { app: Express; brainLoop: BrainLoop; store: Memory
 		}
 	});
 
-	// Session management
 	app.get("/api/sessions", (_req, res) => {
 		res.json(agent.listSessions());
 	});
@@ -204,5 +207,20 @@ export function createApp(): { app: Express; brainLoop: BrainLoop; store: Memory
 		res.json({ ok: true });
 	});
 
-	return { app, brainLoop, store };
+	// Extension introspection (useful for the admin UI)
+	app.get("/api/extensions", (_req, res) => {
+		res.json({
+			loaded: host.getLoadedExtensions(),
+			channels: host.getChannels().map((c) => c.type),
+			tools: host.getTools().map((t) => ({ name: t.name, description: t.description })),
+		});
+	});
+
+	const shutdown = async () => {
+		brainLoop.stop();
+		await host.shutdown();
+		if (store instanceof SqliteStore) (store as SqliteStore).close();
+	};
+
+	return { app, brainLoop, store, host, shutdown };
 }

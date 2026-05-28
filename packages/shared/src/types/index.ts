@@ -22,3 +22,13 @@ export type {
 	ToolParameterProperty,
 	ToolResult,
 } from "./tool.js";
+
+export type {
+	ChannelAdapter,
+	ChannelMessageHandler,
+	ExtensionEvent,
+	EventHandler,
+	ExtensionAPI,
+	ExtensionFactory,
+	Extension,
+} from "./extension.js";

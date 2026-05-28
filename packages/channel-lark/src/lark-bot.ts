@@ -1,4 +1,4 @@
-import type { InboundMessage } from "@cerebro-claw/shared";
+import type { ChannelAdapter, ChannelMessageHandler, InboundMessage } from "@cerebro-claw/shared";
 
 export interface LarkConfig {
 	appId: string;
@@ -8,7 +8,8 @@ export interface LarkConfig {
 export type MessageHandler = (message: InboundMessage) => Promise<void>;
 export type CardActionHandler = (actionId: string, actionValue: Record<string, string>, userId: string) => Promise<void>;
 
-export class LarkBot {
+export class LarkBot implements ChannelAdapter {
+	readonly type = "lark";
 	private config: LarkConfig;
 	private accessToken: string | null = null;
 	private tokenExpiresAt = 0;
@@ -17,6 +18,26 @@ export class LarkBot {
 
 	constructor(config: LarkConfig) {
 		this.config = config;
+	}
+
+	async start(handler: ChannelMessageHandler): Promise<void> {
+		this.handler = async (message) => {
+			const reply = await handler(message);
+			if (reply) await this.send(message.channelId, reply);
+		};
+	}
+
+	async stop(): Promise<void> {
+		this.handler = null;
+		this.cardActionHandler = null;
+	}
+
+	async send(recipientId: string, text: string): Promise<void> {
+		await this.sendMessage(recipientId, text);
+	}
+
+	async sendCard(recipientId: string, card: unknown): Promise<void> {
+		await this.sendInteractiveCard(recipientId, card as LarkCard);
 	}
 
 	onMessage(handler: MessageHandler): void {
