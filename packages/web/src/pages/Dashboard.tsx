@@ -1,9 +1,10 @@
-import { Card, Col, Row, Statistic, Table, Tag, Typography, Badge } from "antd";
+import { Button, Card, Col, Row, Space, Statistic, Table, Tag, Typography, Badge, message } from "antd";
 import {
 	ArrowUpOutlined,
 	ArrowDownOutlined,
 	MinusOutlined,
 	WarningOutlined,
+	ThunderboltOutlined,
 } from "@ant-design/icons";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -60,7 +61,26 @@ function daysSince(dateStr?: string): number | null {
 export function Dashboard() {
 	const [customers, setCustomers] = useState<Customer[]>([]);
 	const [actions, setActions] = useState<PendingAction[]>([]);
+	const [digest, setDigest] = useState<string | null>(null);
+	const [digestLoading, setDigestLoading] = useState(false);
 	const navigate = useNavigate();
+
+	async function runDigest() {
+		setDigestLoading(true);
+		setDigest(null);
+		try {
+			const res = await fetch("/api/digest", { method: "POST" });
+			const data = await res.json();
+			if (res.ok) {
+				setDigest(data.text);
+			} else {
+				message.error(data.error ?? "Digest failed");
+			}
+		} catch (err) {
+			message.error("Failed to reach server");
+		}
+		setDigestLoading(false);
+	}
 
 	useEffect(() => {
 		fetch("/api/customers")
@@ -148,7 +168,37 @@ export function Dashboard() {
 
 	return (
 		<>
-			<Typography.Title level={4}>Dashboard</Typography.Title>
+			<Space style={{ width: "100%", justifyContent: "space-between", marginBottom: 16 }}>
+				<Typography.Title level={4} style={{ margin: 0 }}>
+					Dashboard
+				</Typography.Title>
+				<Button
+					type="primary"
+					icon={<ThunderboltOutlined />}
+					loading={digestLoading}
+					onClick={runDigest}
+				>
+					Run Daily Digest
+				</Button>
+			</Space>
+
+			{digest && (
+				<Card
+					size="small"
+					title="Daily Digest"
+					style={{ marginBottom: 24 }}
+					extra={
+						<Button size="small" onClick={() => setDigest(null)}>
+							Dismiss
+						</Button>
+					}
+				>
+					<Typography.Paragraph style={{ whiteSpace: "pre-wrap", margin: 0 }}>
+						{digest}
+					</Typography.Paragraph>
+				</Card>
+			)}
+
 			<Row gutter={16} style={{ marginBottom: 24 }}>
 				<Col span={6}>
 					<Card>
