@@ -54,6 +54,19 @@ export class AgentRuntime {
 		return Array.from(this.sessions.keys());
 	}
 
+	async ping(): Promise<{ ok: boolean; error?: string }> {
+		try {
+			await this.client.messages.create({
+				model: this.model,
+				max_tokens: 10,
+				messages: [{ role: "user", content: "ping" }],
+			});
+			return { ok: true };
+		} catch (err) {
+			return { ok: false, error: friendlyAnthropicError(err) };
+		}
+	}
+
 	async prompt(userMessage: string, context?: string, sessionId?: string): Promise<AgentResponse> {
 		const systemPrompt = context ? `${SYSTEM_PROMPT}\n\n${context}` : SYSTEM_PROMPT;
 
@@ -144,4 +157,14 @@ export class AgentRuntime {
 
 		return { text: responseText, toolCalls };
 	}
+}
+
+export function friendlyAnthropicError(err: unknown): string {
+	const e = err as { status?: number; error?: { error?: { message?: string } }; message?: string };
+	if (e?.status === 401) return "Invalid ANTHROPIC_API_KEY";
+	if (e?.status === 429) return "Anthropic rate limit hit — try again in a moment";
+	if (e?.status === 529) return "Anthropic is overloaded — retry shortly";
+	if (e?.error?.error?.message) return `Anthropic: ${e.error.error.message}`;
+	if (e?.message) return e.message;
+	return "Unknown error contacting Anthropic";
 }

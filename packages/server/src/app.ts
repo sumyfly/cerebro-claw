@@ -226,6 +226,36 @@ export async function createApp(): Promise<AppHandles> {
 		});
 	});
 
+	// Diagnostics — actually test external service connectivity
+	app.get("/api/diagnostics", async (_req, res) => {
+		const results: Record<string, { ok: boolean; detail?: string }> = {};
+
+		// Database
+		try {
+			await store.listProfiles();
+			results.database = { ok: true, detail: "responsive" };
+		} catch (err) {
+			results.database = { ok: false, detail: String(err) };
+		}
+
+		// Anthropic
+		if (!config.anthropicApiKey) {
+			results.anthropic = { ok: false, detail: "ANTHROPIC_API_KEY not set" };
+		} else {
+			const ping = await agent.ping();
+			results.anthropic = { ok: ping.ok, detail: ping.ok ? "reachable" : ping.error };
+		}
+
+		// Lark
+		if (!config.larkAppId || !config.larkAppSecret) {
+			results.lark = { ok: false, detail: "LARK_APP_ID/SECRET not set" };
+		} else {
+			results.lark = { ok: true, detail: "credentials configured (call from Lark to fully verify)" };
+		}
+
+		res.json(results);
+	});
+
 	const shutdown = async () => {
 		brainLoop.stop();
 		await host.shutdown();

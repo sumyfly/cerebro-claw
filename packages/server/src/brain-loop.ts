@@ -1,5 +1,5 @@
 import type { MemoryStore, CustomerProfile, ExtensionEvent } from "@cerebro-claw/shared";
-import type { AgentRuntime } from "./agent-runtime.js";
+import { friendlyAnthropicError, type AgentRuntime } from "./agent-runtime.js";
 
 export interface EventEmitter {
 	emit<T = unknown>(event: ExtensionEvent, payload: T): Promise<void>;
@@ -121,7 +121,7 @@ If everything looks fine, just say "No action needed for ${companyName}." and mo
 				);
 			}
 		} catch (err) {
-			console.error(`[brain-loop] Error evaluating ${companyName}:`, err);
+			console.error(`[brain-loop] Error evaluating ${companyName}: ${friendlyAnthropicError(err)}`);
 		}
 	}
 

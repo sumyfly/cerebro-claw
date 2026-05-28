@@ -1,11 +1,14 @@
 import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
+import { printStartupBanner, runStartupChecks } from "./startup.js";
 
 const config = loadConfig();
+printStartupBanner(runStartupChecks(config));
+
 const { app, brainLoop, shutdown } = await createApp();
 
 const server = app.listen(config.port, () => {
-	console.log(`[server] Cerebro Claw running on port ${config.port}`);
+	console.log(`[server] Cerebro Claw running on http://localhost:${config.port}`);
 	brainLoop.start();
 });
 
