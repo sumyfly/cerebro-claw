@@ -11,6 +11,7 @@ import { ExtensionHost } from "./extension-host.js";
 import { loadExtensionsFromDir } from "./extension-loader.js";
 import { createAdminAuth } from "./auth.js";
 import { verifyLarkSignature } from "@cerebro-claw/channel-lark";
+import { errorHandler, notFoundHandler, requestLogger } from "./middleware.js";
 import { createLarkExtension } from "./builtin-extensions/lark-extension.js";
 import { memoryToolsExtension } from "./builtin-extensions/memory-tools-extension.js";
 import { createMessageToolsExtension } from "./builtin-extensions/message-tools-extension.js";
@@ -27,6 +28,9 @@ export interface AppHandles {
 export async function createApp(): Promise<AppHandles> {
 	const config = loadConfig();
 	const app = express();
+
+	// Request logging (skips successful /health)
+	app.use(requestLogger());
 
 	// Capture raw body for webhooks (needed for signature verification)
 	app.use(express.json({
@@ -280,6 +284,10 @@ export async function createApp(): Promise<AppHandles> {
 
 		res.json(results);
 	});
+
+	// 404 (must come after all routes) + global error handler (must be last)
+	app.use(notFoundHandler());
+	app.use(errorHandler());
 
 	const shutdown = async () => {
 		brainLoop.stop();

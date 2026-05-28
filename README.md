@@ -112,4 +112,4 @@ pnpm turbo test
 
 ## License
 
-(unspecified — internal project)
+MIT — see [LICENSE](LICENSE).
