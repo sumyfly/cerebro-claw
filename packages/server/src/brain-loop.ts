@@ -1,5 +1,9 @@
-import type { MemoryStore, CustomerProfile } from "@cerebro-claw/shared";
+import type { MemoryStore, CustomerProfile, ExtensionEvent } from "@cerebro-claw/shared";
 import type { AgentRuntime } from "./agent-runtime.js";
+
+export interface EventEmitter {
+	emit<T = unknown>(event: ExtensionEvent, payload: T): Promise<void>;
+}
 
 export class BrainLoop {
 	private store: MemoryStore;
@@ -8,12 +12,20 @@ export class BrainLoop {
 	private timer: ReturnType<typeof setInterval> | null = null;
 	private running = false;
 	private enabled: boolean;
+	private emitter: EventEmitter | null;
 
-	constructor(store: MemoryStore, agent: AgentRuntime, intervalMs: number, enabled = true) {
+	constructor(
+		store: MemoryStore,
+		agent: AgentRuntime,
+		intervalMs: number,
+		enabled = true,
+		emitter: EventEmitter | null = null,
+	) {
 		this.store = store;
 		this.agent = agent;
 		this.intervalMs = intervalMs;
 		this.enabled = enabled;
+		this.emitter = emitter;
 	}
 
 	start(): void {
@@ -66,6 +78,7 @@ Format it as a brief that a busy CSM can scan in 30 seconds. Use the tools to se
 
 		this.running = true;
 		console.log("[brain-loop] Cycle starting");
+		await this.emitter?.emit("brain_loop_cycle_start", { ts: Date.now() });
 
 		try {
 			const profiles = await this.store.listProfiles();
@@ -82,6 +95,7 @@ Format it as a brief that a busy CSM can scan in 30 seconds. Use the tools to se
 		} finally {
 			this.running = false;
 			console.log("[brain-loop] Cycle complete");
+			await this.emitter?.emit("brain_loop_cycle_end", { ts: Date.now() });
 		}
 	}
 

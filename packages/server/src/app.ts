@@ -47,17 +47,18 @@ export async function createApp(): Promise<AppHandles> {
 		pendingActions,
 		onMessage: async (text, senderId, _channelId) => {
 			const sessionId = `lark:${senderId}`;
-			return await router.handleMessage(
-				{
-					channelType: "lark",
-					channelId: _channelId,
-					senderId,
-					senderName: senderId,
-					text,
-					timestamp: new Date(),
-				},
-				sessionId,
-			);
+			const message = {
+				channelType: "lark",
+				channelId: _channelId,
+				senderId,
+				senderName: senderId,
+				text,
+				timestamp: new Date(),
+			};
+			await host.emit("channel_message_received", message);
+			const reply = await router.handleMessage(message, sessionId);
+			if (reply) await host.emit("channel_message_sent", { recipientId: _channelId, text: reply });
+			return reply;
 		},
 	});
 
@@ -77,9 +78,15 @@ export async function createApp(): Promise<AppHandles> {
 	// Agent runtime uses tools collected from extensions
 	const agent = new AgentRuntime(config.anthropicApiKey, config.model, host.getTools());
 
-	// Router and brain loop
+	// Router and brain loop (brain loop emits lifecycle events through the host)
 	const router = new Router(agent);
-	const brainLoop = new BrainLoop(store, agent, config.brainLoopIntervalMs, !!config.anthropicApiKey);
+	const brainLoop = new BrainLoop(
+		store,
+		agent,
+		config.brainLoopIntervalMs,
+		!!config.anthropicApiKey,
+		host,
+	);
 
 	// --- HTTP Routes ---
 
