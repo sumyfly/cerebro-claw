@@ -11,7 +11,8 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "lint": "biome check src/"
+    "lint": "biome check src/",
+    "test": "vitest run"
   },
   "dependencies": {
     "@cerebro-claw/shared": "workspace:*"

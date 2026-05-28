@@ -1,24 +1,32 @@
 /**
- * Sample extension: greeting tool.
+ * Sample extension: demonstrates registering a tool, a channel-style helper,
+ * and a brain-loop event hook.
  *
- * This shows how a third-party extension plugs into Cerebro Claw without
- * editing any core code. Drop a directory here, give it an `index.ts` (or .js)
- * that default-exports an Extension, and the server picks it up at startup.
+ * Drop this directory anywhere under extensions/ and the server picks it up
+ * at startup (see loadExtensionsFromDir).
  *
- * Run: server logs "[extensions] Discovered: sample-greeting (sample-greeting)"
- * then "[extensions] Loaded: sample-greeting".
+ * Two demos in here:
  *
- * To use: the agent now has a `greeting` tool it can call.
+ *  1. `greeting` — toy tool to prove tool registration works.
+ *  2. `service_status` — real-world pattern: a tool that fetches live data
+ *     via the bash tool. The agent calls `service_status` and it returns
+ *     the HTTP status code from a public endpoint (api.github.com).
+ *     This pattern (extension wraps bash+curl) is how M3 connectors will
+ *     plug in CRM / usage / ticket APIs without modifying core code.
  */
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import type { Extension } from "@cerebro-claw/shared";
 
-const greetingExtension: Extension = {
+const exec = promisify(execFile);
+
+const sampleExtension: Extension = {
 	id: "sample-greeting",
 	factory: (api) => {
 		api.registerTool({
 			name: "greeting",
 			description:
-				"Return a friendly greeting for a person by name. Demo tool to verify the extension system works.",
+				"Return a friendly greeting for a person by name. Demo tool to verify extension registration.",
 			parameters: {
 				type: "object",
 				properties: {
@@ -35,10 +43,55 @@ const greetingExtension: Extension = {
 			},
 		});
 
+		api.registerTool({
+			name: "service_status",
+			description:
+				"Check whether an external service is up. Returns HTTP status code from a HEAD request. Use this as an example of how an extension can wrap a real data source for the agent.",
+			parameters: {
+				type: "object",
+				properties: {
+					url: {
+						type: "string",
+						description: "URL to probe (https only)",
+					},
+				},
+				required: ["url"],
+			},
+			async execute(params) {
+				const url = params.url as string;
+				if (!/^https:\/\//.test(url)) {
+					return { content: "Only https:// URLs are allowed.", success: false };
+				}
+				try {
+					const { stdout } = await exec("curl", [
+						"-sS",
+						"-o",
+						"/dev/null",
+						"-w",
+						"%{http_code}",
+						"--max-time",
+						"5",
+						url,
+					]);
+					const code = parseInt(stdout, 10);
+					return {
+						content: `${url} → HTTP ${code}`,
+						success: code >= 200 && code < 400,
+						details: { httpCode: code },
+					};
+				} catch (err) {
+					return {
+						content: `Failed to reach ${url}: ${(err as Error).message}`,
+						success: false,
+					};
+				}
+			},
+		});
+
 		api.on("brain_loop_cycle_start", () => {
 			console.log(`[${api.extensionId}] brain loop cycle starting`);
 		});
 	},
 };
 
-export default greetingExtension;
+export default sampleExtension;

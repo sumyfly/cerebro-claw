@@ -42,6 +42,20 @@ export function runStartupChecks(config: ServerConfig): StartupCheck[] {
 			ok: true,
 			detail: config.bashAllowlist.join(", "),
 		},
+		{
+			name: "ADMIN_TOKEN",
+			ok: Boolean(config.adminToken),
+			detail: config.adminToken
+				? "set — admin API requires bearer auth"
+				: "missing — admin API is OPEN (dev only)",
+		},
+		{
+			name: "LARK_VERIFICATION_TOKEN",
+			ok: Boolean(config.larkVerificationToken),
+			detail: config.larkVerificationToken
+				? "set — webhook signatures verified"
+				: "missing — webhooks accepted without verification (dev only)",
+		},
 	];
 }
 

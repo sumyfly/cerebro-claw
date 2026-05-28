@@ -4,6 +4,7 @@ import { AppLayout } from "./components/Layout.js";
 import { Dashboard } from "./pages/Dashboard.js";
 import { Customers } from "./pages/Customers.js";
 import { Activity } from "./pages/Activity.js";
+import { Extensions } from "./pages/Extensions.js";
 
 export function App() {
 	return (
@@ -14,6 +15,7 @@ export function App() {
 						<Route path="/" element={<Dashboard />} />
 						<Route path="/customers" element={<Customers />} />
 						<Route path="/activity" element={<Activity />} />
+						<Route path="/extensions" element={<Extensions />} />
 					</Routes>
 				</AppLayout>
 			</BrowserRouter>

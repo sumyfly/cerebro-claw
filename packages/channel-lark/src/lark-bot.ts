@@ -1,8 +1,33 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import type { ChannelAdapter, ChannelMessageHandler, InboundMessage } from "@cerebro-claw/shared";
 
 export interface LarkConfig {
 	appId: string;
 	appSecret: string;
+	/** Optional encryption/verification token from Lark event settings. */
+	verificationToken?: string;
+}
+
+/**
+ * Verify a Lark webhook signature using the per-app verification token.
+ * Lark sends X-Lark-Signature: sha256(timestamp + nonce + token + body).
+ */
+export function verifyLarkSignature(
+	token: string,
+	timestamp: string,
+	nonce: string,
+	body: string,
+	signature: string,
+): boolean {
+	const expected = createHash("sha256")
+		.update(timestamp + nonce + token + body)
+		.digest("hex");
+	if (expected.length !== signature.length) return false;
+	try {
+		return timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
+	} catch {
+		return false;
+	}
 }
 
 export type MessageHandler = (message: InboundMessage) => Promise<void>;

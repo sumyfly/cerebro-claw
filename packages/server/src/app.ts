@@ -9,6 +9,8 @@ import { BrainLoop } from "./brain-loop.js";
 import { loadConfig } from "./config.js";
 import { ExtensionHost } from "./extension-host.js";
 import { loadExtensionsFromDir } from "./extension-loader.js";
+import { createAdminAuth } from "./auth.js";
+import { verifyLarkSignature } from "@cerebro-claw/channel-lark";
 import { createLarkExtension } from "./builtin-extensions/lark-extension.js";
 import { memoryToolsExtension } from "./builtin-extensions/memory-tools-extension.js";
 import { createMessageToolsExtension } from "./builtin-extensions/message-tools-extension.js";
@@ -25,7 +27,16 @@ export interface AppHandles {
 export async function createApp(): Promise<AppHandles> {
 	const config = loadConfig();
 	const app = express();
-	app.use(express.json());
+
+	// Capture raw body for webhooks (needed for signature verification)
+	app.use(express.json({
+		verify: (req, _res, buf) => {
+			(req as unknown as { rawBody: string }).rawBody = buf.toString("utf8");
+		},
+	}));
+
+	// Admin auth — must come before API routes
+	app.use(createAdminAuth(config.adminToken));
 
 	// Memory (SQLite — survives restarts)
 	mkdirSync(dirname(config.dbPath), { recursive: true });
@@ -100,9 +111,23 @@ export async function createApp(): Promise<AppHandles> {
 		});
 	});
 
-	// Lark webhook
+	// Lark webhook (signature-verified if token is configured)
 	app.post("/webhook/lark", async (req, res) => {
 		try {
+			if (config.larkVerificationToken) {
+				const timestamp = req.header("X-Lark-Request-Timestamp") ?? "";
+				const nonce = req.header("X-Lark-Request-Nonce") ?? "";
+				const signature = req.header("X-Lark-Signature") ?? "";
+				const rawBody = (req as unknown as { rawBody?: string }).rawBody ?? "";
+
+				// URL verification challenges arrive before signing is set up
+				if (req.body.type !== "url_verification") {
+					if (!verifyLarkSignature(config.larkVerificationToken, timestamp, nonce, rawBody, signature)) {
+						res.status(401).json({ error: "Invalid signature" });
+						return;
+					}
+				}
+			}
 			const result = await lark.bot.handleWebhook(req.body);
 			res.json(result ?? { ok: true });
 		} catch (err) {

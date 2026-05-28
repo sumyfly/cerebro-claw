@@ -3,6 +3,7 @@ import {
 	DashboardOutlined,
 	TeamOutlined,
 	BellOutlined,
+	ApiOutlined,
 } from "@ant-design/icons";
 import { useNavigate, useLocation } from "react-router-dom";
 import type { ReactNode } from "react";
@@ -13,6 +14,7 @@ const menuItems = [
 	{ key: "/", icon: <DashboardOutlined />, label: "Dashboard" },
 	{ key: "/customers", icon: <TeamOutlined />, label: "Customers" },
 	{ key: "/activity", icon: <BellOutlined />, label: "Activity" },
+	{ key: "/extensions", icon: <ApiOutlined />, label: "Extensions" },
 ];
 
 export function AppLayout({ children }: { children: ReactNode }) {
