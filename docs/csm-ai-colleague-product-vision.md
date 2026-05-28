@@ -488,3 +488,20 @@ Adding a second channel (email, Slack) or a CRM connector no longer requires edi
 4. Add it to the host's `load()` call
 
 The MVP is complete: **all six modules from CLAUDE.md are now real, not aspirational.**
+
+### Filesystem extension loading
+
+Custom extensions go in the `extensions/` directory:
+
+```
+extensions/
+├── sample-greeting/
+│   └── index.ts        # exports default Extension
+├── my-crm-connector/
+│   └── index.ts
+└── ...
+```
+
+Each extension's `index.ts` (or `.js`, `.mjs`) default-exports an `Extension { id, factory }`. The server's `loadExtensionsFromDir` picks them up at startup and the extension host loads them after the built-ins.
+
+A working example is in `extensions/sample-greeting/` — it registers a `greeting` tool and hooks the brain loop start event.

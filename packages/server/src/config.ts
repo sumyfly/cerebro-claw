@@ -12,6 +12,7 @@ export interface ServerConfig {
 	dbPath: string;
 	bashAllowlist: string[];
 	bashTimeoutMs: number;
+	extensionsDir: string;
 }
 
 export function loadConfig(): ServerConfig {
@@ -30,5 +31,6 @@ export function loadConfig(): ServerConfig {
 		dbPath: process.env.DB_PATH ?? join(homedir(), ".cerebro-claw", "data.db"),
 		bashAllowlist,
 		bashTimeoutMs: Number(process.env.BASH_TIMEOUT_MS ?? 30_000),
+		extensionsDir: process.env.EXTENSIONS_DIR ?? join(process.cwd(), "extensions"),
 	};
 }

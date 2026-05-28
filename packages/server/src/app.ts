@@ -8,6 +8,7 @@ import { Router } from "./router.js";
 import { BrainLoop } from "./brain-loop.js";
 import { loadConfig } from "./config.js";
 import { ExtensionHost } from "./extension-host.js";
+import { loadExtensionsFromDir } from "./extension-loader.js";
 import { createLarkExtension } from "./builtin-extensions/lark-extension.js";
 import { memoryToolsExtension } from "./builtin-extensions/memory-tools-extension.js";
 import { createMessageToolsExtension } from "./builtin-extensions/message-tools-extension.js";
@@ -60,7 +61,8 @@ export async function createApp(): Promise<AppHandles> {
 		},
 	});
 
-	// Load all extensions (built-in + future user-provided)
+	// Load extensions: built-in first, then any from the extensions/ directory
+	const userExtensions = await loadExtensionsFromDir(config.extensionsDir);
 	await host.load([
 		memoryToolsExtension,
 		createMessageToolsExtension({ pendingActions, host }),
@@ -69,6 +71,7 @@ export async function createApp(): Promise<AppHandles> {
 			timeoutMs: config.bashTimeoutMs,
 		}),
 		lark.extension,
+		...userExtensions,
 	]);
 
 	// Agent runtime uses tools collected from extensions
