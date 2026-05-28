@@ -1,0 +1,29 @@
+services:
+  server:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      DB_PATH: /data/cerebro-claw.db
+      EXTENSIONS_DIR: /app/extensions
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      LARK_APP_ID: ${LARK_APP_ID:-}
+      LARK_APP_SECRET: ${LARK_APP_SECRET:-}
+      LARK_VERIFICATION_TOKEN: ${LARK_VERIFICATION_TOKEN:-}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      MODEL: ${MODEL:-claude-sonnet-4-20250514}
+      BRAIN_LOOP_INTERVAL_MS: ${BRAIN_LOOP_INTERVAL_MS:-300000}
+      BASH_ALLOWLIST: ${BASH_ALLOWLIST:-curl,cat,head,tail,ls,grep,find,jq,date,echo,wc}
+      BASH_TIMEOUT_MS: ${BASH_TIMEOUT_MS:-30000}
+    volumes:
+      - cerebro-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  cerebro-data:

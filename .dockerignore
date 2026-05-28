@@ -1,0 +1,14 @@
+node_modules
+**/node_modules
+**/dist
+**/.turbo
+.turbo
+.git
+.github
+.env
+.env.*
+*.tsbuildinfo
+.claude
+docs
+packages/web
+README.md
