@@ -20,6 +20,8 @@ export interface ServerConfig {
 	runtime: RuntimeKind;
 	claudeBinary: string;
 	defaultCsmLarkUserId: string;
+	dispatcherIntervalMs: number;
+	defaultPauseMinutes: number;
 }
 
 export function loadConfig(): ServerConfig {
@@ -44,5 +46,7 @@ export function loadConfig(): ServerConfig {
 		runtime: (process.env.RUNTIME === "claude-code" ? "claude-code" : "anthropic"),
 		claudeBinary: process.env.CLAUDE_BINARY ?? "claude",
 		defaultCsmLarkUserId: process.env.DEFAULT_CSM_LARK_USER_ID ?? "",
+		dispatcherIntervalMs: Number(process.env.DISPATCHER_INTERVAL_MS ?? 60_000),
+		defaultPauseMinutes: Number(process.env.DEFAULT_PAUSE_MINUTES ?? 240),
 	};
 }

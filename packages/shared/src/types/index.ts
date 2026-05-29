@@ -32,3 +32,12 @@ export type {
 	ExtensionFactory,
 	Extension,
 } from "./extension.js";
+
+export type {
+	ActionBand,
+	ActionStatus,
+	ActionLedgerEntry,
+	ActionLedger,
+} from "./action.js";
+
+export type { CustomerChannel } from "./customer-channel.js";

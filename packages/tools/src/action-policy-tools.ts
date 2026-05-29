@@ -1,0 +1,383 @@
+import type {
+	ActionLedger,
+	ActionLedgerEntry,
+	CustomerChannel,
+	ToolDefinition,
+} from "@cerebro-claw/shared";
+
+/**
+ * Context the action-policy tools need.
+ *
+ * - ledger: where every act/notify/escalate/prep lands.
+ * - customerChannel: how the agent reaches a customer (stubbed by default).
+ * - sendToCsm: how the agent reaches the CSM internally (Lark, email, etc).
+ *   Returns void — failures must throw so the tools can surface them.
+ * - defaultCsmRecipientId: where to deliver heads-ups/escalations when the
+ *   caller didn't specify one. Usually DEFAULT_CSM_LARK_USER_ID.
+ * - defaultPauseMinutes: pause window for notify-then-act when the agent
+ *   didn't pick one. 240min (4h) per work-inventory.md.
+ * - now: clock — injectable for tests.
+ */
+export interface ActionPolicyToolsContext {
+	ledger: ActionLedger;
+	customerChannel: CustomerChannel;
+	sendToCsm: (recipientId: string, text: string) => Promise<void>;
+	defaultCsmRecipientId?: string;
+	defaultPauseMinutes?: number;
+	now?: () => Date;
+}
+
+const BAND_LABEL: Record<string, string> = {
+	act: "Act",
+	"notify-then-act": "Notify-then-act",
+	escalate: "Escalate",
+	prep: "Prep",
+};
+
+export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefinition[] {
+	const now = () => ctx.now?.() ?? new Date();
+	const defaultPauseMinutes = ctx.defaultPauseMinutes ?? 240;
+
+	function csmRecipient(explicit?: string): string {
+		const r = explicit ?? ctx.defaultCsmRecipientId;
+		if (!r) {
+			throw new Error(
+				"No CSM recipient set. Pass csm_recipient_id or configure DEFAULT_CSM_LARK_USER_ID.",
+			);
+		}
+		return r;
+	}
+
+	const act: ToolDefinition = {
+		name: "act",
+		description:
+			"Record an autonomous action the agent has already taken (Act band): an internal note logged, an instinct captured, a detection performed, an internal ping sent. Use this whenever you do something reversible, low-stakes, and fact-based without needing CSM approval. Increments the daily Act counter in the digest.",
+		parameters: {
+			type: "object",
+			properties: {
+				customer_id: { type: "string", description: "Customer this action relates to (CSP business id)" },
+				customer_name: { type: "string", description: "Customer name for the digest line" },
+				summary: { type: "string", description: "One-line description of what you just did" },
+				reason: { type: "string", description: "Why this action was warranted (signal + judgment)" },
+			},
+			required: ["customer_id", "summary", "reason"],
+		},
+		async execute(params) {
+			const entry = await ctx.ledger.record({
+				band: "act",
+				customerId: params.customer_id as string,
+				customerName: (params.customer_name as string) ?? undefined,
+				summary: params.summary as string,
+				reason: params.reason as string,
+				status: "done",
+				executedAt: now(),
+			});
+			return {
+				content: `Act logged (#${entry.id.slice(0, 8)}): ${entry.summary}`,
+				success: true,
+				details: { actionId: entry.id, band: entry.band },
+			};
+		},
+	};
+
+	const notify: ToolDefinition = {
+		name: "notify_then_send_to_customer",
+		description:
+			"Notify-then-act band: send a heads-up to the CSM now, schedule the customer-facing message after a short pause window (default 4h). If the CSM cancels via cancel_pending_action during the window, the send never happens. Use this for routine customer touches: monthly check-ins, feature-adoption nudges, post-onboarding follow-ups, renewal nudges. The CSM only needs to step in if they want to cancel.",
+		parameters: {
+			type: "object",
+			properties: {
+				customer_id: { type: "string", description: "Customer this is about (CSP business id)" },
+				customer_name: { type: "string", description: "Customer name for the digest line" },
+				recipient: {
+					type: "string",
+					description: "How to reach the customer (email, phone, contact id, etc.)",
+				},
+				text: { type: "string", description: "The message to send to the customer" },
+				reason: {
+					type: "string",
+					description: "Why you're sending this — shown to the CSM in the heads-up",
+				},
+				pause_minutes: {
+					type: "number",
+					description: "Minutes the CSM has to cancel before the send dispatches (default 240, max 1440)",
+				},
+				csm_recipient_id: {
+					type: "string",
+					description: "Override the CSM channel recipient (defaults to DEFAULT_CSM_LARK_USER_ID)",
+				},
+			},
+			required: ["customer_id", "recipient", "text", "reason"],
+		},
+		async execute(params) {
+			const customerName = (params.customer_name as string) ?? (params.customer_id as string);
+			const rawPause = params.pause_minutes as number | undefined;
+			const pauseMin = Math.min(
+				1440,
+				Math.max(1, Number.isFinite(rawPause) && rawPause! > 0 ? (rawPause as number) : defaultPauseMinutes),
+			);
+			const created = now();
+			const executeAt = new Date(created.getTime() + pauseMin * 60_000);
+
+			const entry = await ctx.ledger.record({
+				band: "notify-then-act",
+				customerId: params.customer_id as string,
+				customerName,
+				summary: `Send to ${customerName}: ${(params.text as string).slice(0, 100)}`,
+				reason: params.reason as string,
+				status: "in-flight",
+				createdAt: created,
+				executeAt,
+				payload: {
+					recipient: params.recipient,
+					text: params.text,
+				},
+			});
+
+			// Heads-up to the CSM — they have `pauseMin` minutes to cancel.
+			const headsUp = [
+				`📤 About to send to ${customerName} in ${pauseMin}m`,
+				"",
+				`Why: ${entry.reason}`,
+				`To: ${params.recipient}`,
+				"",
+				`> ${(params.text as string).slice(0, 240)}`,
+				"",
+				`Cancel with: cancel_pending_action ${entry.id}`,
+			].join("\n");
+			try {
+				await ctx.sendToCsm(csmRecipient(params.csm_recipient_id as string | undefined), headsUp);
+			} catch (err) {
+				await ctx.ledger.update(entry.id, {
+					status: "failed",
+					note: `Heads-up to CSM failed: ${(err as Error).message}`,
+				});
+				throw err;
+			}
+
+			return {
+				content: `Notify-then-act queued (#${entry.id.slice(0, 8)}). Will send to ${customerName} at ${executeAt.toISOString()} unless cancelled.`,
+				success: true,
+				details: { actionId: entry.id, executeAt: executeAt.toISOString(), pauseMinutes: pauseMin },
+			};
+		},
+	};
+
+	const escalate: ToolDefinition = {
+		name: "escalate",
+		description:
+			"Escalate band: brief the CSM with situation + options + your recommendation. Use this for high-stakes or genuinely ambiguous decisions: churn intervention, discount/commercial concession, contract change, complaint, upsell pitch, stakeholder change. DOES NOT send anything to the customer. The CSM owns the decision; you've done the homework.",
+		parameters: {
+			type: "object",
+			properties: {
+				customer_id: { type: "string", description: "Customer (CSP business id)" },
+				customer_name: { type: "string", description: "Customer name" },
+				situation: { type: "string", description: "What's going on, in one paragraph" },
+				options: {
+					type: "string",
+					description: "Numbered list of options the CSM could take",
+				},
+				recommendation: {
+					type: "string",
+					description: "Which option you'd pick and why",
+				},
+				urgency: {
+					type: "string",
+					description: "Why this needs attention now (deadline, signal)",
+				},
+				csm_recipient_id: {
+					type: "string",
+					description: "Override the CSM channel recipient",
+				},
+			},
+			required: ["customer_id", "situation", "options", "recommendation"],
+		},
+		async execute(params) {
+			const customerName = (params.customer_name as string) ?? (params.customer_id as string);
+			const brief = [
+				`⚠️ Escalation: ${customerName}`,
+				"",
+				`Situation: ${params.situation}`,
+				"",
+				`Options:\n${params.options}`,
+				"",
+				`Recommendation: ${params.recommendation}`,
+				params.urgency ? `\nUrgency: ${params.urgency}` : "",
+			]
+				.filter(Boolean)
+				.join("\n");
+
+			const entry = await ctx.ledger.record({
+				band: "escalate",
+				customerId: params.customer_id as string,
+				customerName,
+				summary: `Escalation: ${customerName} — needs CSM decision`,
+				reason: params.situation as string,
+				status: "needs-csm",
+				payload: {
+					situation: params.situation,
+					options: params.options,
+					recommendation: params.recommendation,
+					urgency: params.urgency,
+				},
+			});
+
+			try {
+				await ctx.sendToCsm(csmRecipient(params.csm_recipient_id as string | undefined), brief);
+			} catch (err) {
+				await ctx.ledger.update(entry.id, {
+					status: "failed",
+					note: `Brief to CSM failed: ${(err as Error).message}`,
+				});
+				throw err;
+			}
+
+			return {
+				content: `Escalation briefed (#${entry.id.slice(0, 8)}). CSM owns the decision.`,
+				success: true,
+				details: { actionId: entry.id },
+			};
+		},
+	};
+
+	const prep: ToolDefinition = {
+		name: "prep",
+		description:
+			"Prep band: ship a finished v1 the CSM will use to drive a CSM-owned conversation. Examples: pre-call brief 30 min before, renewal brief 30 days out, QBR deck v1, weekly portfolio status, handoff brief. The artifact is delivered to the CSM directly and recorded in the ledger.",
+		parameters: {
+			type: "object",
+			properties: {
+				customer_id: { type: "string", description: "Customer (CSP business id), or 'portfolio' for cross-customer briefs" },
+				customer_name: { type: "string", description: "Customer name (or 'Portfolio')" },
+				artifact_type: {
+					type: "string",
+					description: "What you prepared (pre-call brief, renewal brief, QBR deck, weekly status, handoff brief)",
+				},
+				body: { type: "string", description: "The finished artifact, formatted for the channel" },
+				csm_recipient_id: {
+					type: "string",
+					description: "Override the CSM channel recipient",
+				},
+			},
+			required: ["customer_id", "artifact_type", "body"],
+		},
+		async execute(params) {
+			const customerName = (params.customer_name as string) ?? (params.customer_id as string);
+			const entry = await ctx.ledger.record({
+				band: "prep",
+				customerId: params.customer_id as string,
+				customerName,
+				summary: `${params.artifact_type} ready: ${customerName}`,
+				reason: `Prep artifact: ${params.artifact_type}`,
+				status: "done",
+				executedAt: now(),
+				payload: {
+					artifactType: params.artifact_type,
+					body: params.body,
+				},
+			});
+
+			try {
+				await ctx.sendToCsm(
+					csmRecipient(params.csm_recipient_id as string | undefined),
+					`📋 ${params.artifact_type} — ${customerName}\n\n${params.body}`,
+				);
+			} catch (err) {
+				await ctx.ledger.update(entry.id, {
+					status: "failed",
+					note: `Delivery to CSM failed: ${(err as Error).message}`,
+				});
+				throw err;
+			}
+
+			return {
+				content: `Prep delivered (#${entry.id.slice(0, 8)}): ${params.artifact_type} for ${customerName}.`,
+				success: true,
+				details: { actionId: entry.id },
+			};
+		},
+	};
+
+	const cancel: ToolDefinition = {
+		name: "cancel_pending_action",
+		description:
+			"Cancel a notify-then-act or escalate entry before it dispatches. Use when new evidence changes the call (CSM said don't, customer self-served, situation resolved). Acts and prep cannot be cancelled — they already happened.",
+		parameters: {
+			type: "object",
+			properties: {
+				action_id: { type: "string", description: "Ledger entry id to cancel" },
+				reason: { type: "string", description: "Why this is being cancelled" },
+			},
+			required: ["action_id", "reason"],
+		},
+		async execute(params) {
+			const id = params.action_id as string;
+			const existing = await ctx.ledger.get(id);
+			if (!existing) {
+				return { content: `No action found with id ${id}.`, success: false };
+			}
+			if (existing.band !== "notify-then-act" && existing.band !== "escalate") {
+				return {
+					content: `Cannot cancel ${BAND_LABEL[existing.band]} actions — they already happened.`,
+					success: false,
+				};
+			}
+			if (existing.status !== "in-flight" && existing.status !== "needs-csm") {
+				return {
+					content: `Action #${id.slice(0, 8)} is already ${existing.status} — cannot cancel.`,
+					success: false,
+				};
+			}
+			const updated = await ctx.ledger.update(id, {
+				status: "cancelled",
+				note: params.reason as string,
+				executedAt: now(),
+			});
+			return {
+				content: `Cancelled action #${id.slice(0, 8)}: ${updated?.summary}`,
+				success: true,
+				details: { actionId: id },
+			};
+		},
+	};
+
+	const resolve: ToolDefinition = {
+		name: "resolve_escalation",
+		description:
+			"Mark an escalation as resolved after the CSM has decided. Records what they chose so the digest moves it out of 'needs-csm' into 'handled today'.",
+		parameters: {
+			type: "object",
+			properties: {
+				action_id: { type: "string", description: "Ledger entry id to resolve" },
+				outcome: { type: "string", description: "What the CSM decided" },
+			},
+			required: ["action_id", "outcome"],
+		},
+		async execute(params) {
+			const id = params.action_id as string;
+			const existing = await ctx.ledger.get(id);
+			if (!existing) {
+				return { content: `No action found with id ${id}.`, success: false };
+			}
+			if (existing.band !== "escalate") {
+				return { content: `Action ${id} is not an escalation.`, success: false };
+			}
+			if (existing.status !== "needs-csm") {
+				return { content: `Escalation #${id.slice(0, 8)} is already ${existing.status}.`, success: false };
+			}
+			const updated = await ctx.ledger.update(id, {
+				status: "resolved",
+				note: params.outcome as string,
+				executedAt: now(),
+			});
+			return {
+				content: `Escalation resolved (#${id.slice(0, 8)}): ${updated?.note}`,
+				success: true,
+			};
+		},
+	};
+
+	return [act, notify, escalate, prep, cancel, resolve];
+}
+
+export type { ActionLedgerEntry };

@@ -1,13 +1,15 @@
 import express, { type Express } from "express";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { MemoryStore, PendingAction } from "@cerebro-claw/shared";
-import { SqliteStore } from "@cerebro-claw/memory";
+import type { ActionLedger, CustomerChannel, MemoryStore, PendingAction } from "@cerebro-claw/shared";
+import { SqliteActionLedger, SqliteStore } from "@cerebro-claw/memory";
+import { StubCustomerChannel } from "@cerebro-claw/tools";
 import { AgentRuntime, type AgentBackend } from "./agent-runtime.js";
 import { ClaudeCodeRuntime } from "./claude-code-runtime.js";
 import { createMcpHandler } from "./mcp-server.js";
 import { Router } from "./router.js";
 import { BrainLoop, createCspAccountSource } from "./brain-loop.js";
+import { NotifyThenActDispatcher } from "./dispatcher.js";
 import { loadConfig } from "./config.js";
 import { ExtensionHost } from "./extension-host.js";
 import { loadExtensionsFromDir } from "./extension-loader.js";
@@ -18,10 +20,14 @@ import { createLarkExtension } from "./builtin-extensions/lark-extension.js";
 import { memoryToolsExtension } from "./builtin-extensions/memory-tools-extension.js";
 import { createMessageToolsExtension } from "./builtin-extensions/message-tools-extension.js";
 import { createBashToolExtension } from "./builtin-extensions/bash-tool-extension.js";
+import { createActionPolicyExtension } from "./builtin-extensions/action-policy-extension.js";
 
 export interface AppHandles {
 	app: Express;
 	brainLoop: BrainLoop;
+	dispatcher: NotifyThenActDispatcher;
+	ledger: ActionLedger;
+	customerChannel: CustomerChannel;
 	store: MemoryStore;
 	host: ExtensionHost;
 	shutdown: () => Promise<void>;
@@ -48,7 +54,14 @@ export async function createApp(): Promise<AppHandles> {
 	mkdirSync(dirname(config.dbPath), { recursive: true });
 	const store: MemoryStore = new SqliteStore(config.dbPath);
 
-	// Pending actions queue (shared across extensions)
+	// Action ledger — every act / notify / escalate / prep lands here
+	const ledger: ActionLedger = new SqliteActionLedger(config.dbPath);
+
+	// Customer channel — stub by default. Real channels (email, SMS) drop in
+	// as extensions later by implementing CustomerChannel.
+	const customerChannel: CustomerChannel = new StubCustomerChannel();
+
+	// Pending actions queue (shared across extensions, legacy draft flow)
 	const pendingActions = new Map<string, PendingAction>();
 
 	// Extension host — collects tools, channels, and event handlers
@@ -86,6 +99,13 @@ export async function createApp(): Promise<AppHandles> {
 	await host.load([
 		memoryToolsExtension,
 		createMessageToolsExtension({ pendingActions, host }),
+		createActionPolicyExtension({
+			ledger,
+			customerChannel,
+			host,
+			defaultCsmRecipientId: config.defaultCsmLarkUserId || undefined,
+			defaultPauseMinutes: config.defaultPauseMinutes,
+		}),
 		createBashToolExtension({
 			allowlist: config.bashAllowlist,
 			timeoutMs: config.bashTimeoutMs,
@@ -134,6 +154,14 @@ export async function createApp(): Promise<AppHandles> {
 		host,
 		cspSource,
 	);
+
+	// Dispatcher — picks up due notify-then-act sends and pushes them through
+	// the customer channel. Always on, regardless of agent runtime.
+	const dispatcher = new NotifyThenActDispatcher({
+		ledger,
+		customerChannel,
+		intervalMs: config.dispatcherIntervalMs,
+	});
 
 	// --- HTTP Routes ---
 
@@ -225,6 +253,87 @@ export async function createApp(): Promise<AppHandles> {
 
 	app.get("/api/actions", (_req, res) => {
 		res.json(Array.from(pendingActions.values()));
+	});
+
+	// Action ledger — the agent's daily work log. Drives the digest.
+	app.get("/api/ledger", async (req, res) => {
+		const sinceStr = (req.query.since as string) ?? "";
+		const untilStr = (req.query.until as string) ?? "";
+		const since = sinceStr ? new Date(sinceStr) : new Date(Date.now() - 24 * 3600 * 1000);
+		const until = untilStr ? new Date(untilStr) : new Date();
+		const entries = await ledger.listByWindow(since, until);
+		res.json({ since: since.toISOString(), until: until.toISOString(), entries });
+	});
+
+	app.get("/api/ledger/open", async (_req, res) => {
+		const entries = await ledger.listOpen();
+		res.json(entries);
+	});
+
+	app.post("/api/ledger/:id/cancel", async (req, res) => {
+		const existing = await ledger.get(req.params.id);
+		if (!existing) {
+			res.status(404).json({ error: "Not found" });
+			return;
+		}
+		if (existing.band !== "notify-then-act" && existing.band !== "escalate") {
+			res.status(400).json({ error: "Only notify-then-act and escalate can be cancelled" });
+			return;
+		}
+		if (existing.status !== "in-flight" && existing.status !== "needs-csm") {
+			res.status(400).json({ error: `Cannot cancel — already ${existing.status}` });
+			return;
+		}
+		const updated = await ledger.update(req.params.id, {
+			status: "cancelled",
+			note: (req.body?.reason as string) ?? "cancelled via admin API",
+			executedAt: new Date(),
+		});
+		res.json(updated);
+	});
+
+	app.post("/api/ledger/:id/resolve", async (req, res) => {
+		const existing = await ledger.get(req.params.id);
+		if (!existing) {
+			res.status(404).json({ error: "Not found" });
+			return;
+		}
+		if (existing.band !== "escalate") {
+			res.status(400).json({ error: "Only escalations can be resolved" });
+			return;
+		}
+		const updated = await ledger.update(req.params.id, {
+			status: "resolved",
+			note: (req.body?.outcome as string) ?? "resolved via admin API",
+			executedAt: new Date(),
+		});
+		res.json(updated);
+	});
+
+	// "Yesterday: 47 acts, 12 notifies in-flight, 2 escalations need you."
+	app.get("/api/digest/counters", async (req, res) => {
+		const now = new Date();
+		const windowHours = Number(req.query.hours ?? 24);
+		const since = new Date(now.getTime() - windowHours * 3600 * 1000);
+		const recent = await ledger.listByWindow(since, now);
+		const open = await ledger.listOpen();
+		const counts = {
+			windowHours,
+			acts: recent.filter((e) => e.band === "act").length,
+			notifies: {
+				inFlight: open.filter((e) => e.band === "notify-then-act").length,
+				executed: recent.filter((e) => e.band === "notify-then-act" && e.status === "executed").length,
+				cancelled: recent.filter((e) => e.band === "notify-then-act" && e.status === "cancelled").length,
+				failed: recent.filter((e) => e.band === "notify-then-act" && e.status === "failed").length,
+			},
+			escalations: {
+				needsCsm: open.filter((e) => e.band === "escalate").length,
+				resolved: recent.filter((e) => e.band === "escalate" && e.status === "resolved").length,
+			},
+			preps: recent.filter((e) => e.band === "prep").length,
+		};
+		const headline = `Yesterday: ${counts.acts} acts, ${counts.notifies.inFlight} notifies in-flight, ${counts.escalations.needsCsm} escalations need you.`;
+		res.json({ headline, counts });
 	});
 
 	app.post("/api/actions/:id/approve", async (req, res) => {
@@ -326,9 +435,11 @@ export async function createApp(): Promise<AppHandles> {
 
 	const shutdown = async () => {
 		brainLoop.stop();
+		dispatcher.stop();
 		await host.shutdown();
+		if (ledger instanceof SqliteActionLedger) (ledger as SqliteActionLedger).close();
 		if (store instanceof SqliteStore) (store as SqliteStore).close();
 	};
 
-	return { app, brainLoop, store, host, shutdown };
+	return { app, brainLoop, dispatcher, ledger, customerChannel, store, host, shutdown };
 }

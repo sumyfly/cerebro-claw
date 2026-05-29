@@ -123,4 +123,55 @@ describe("App integration", () => {
 		expect(res.body.runtime).toBeDefined();
 		expect(res.body.lark).toBeDefined();
 	});
+
+	it("exposes the four action-policy tools through /api/extensions", async () => {
+		const res = await request(app).get("/api/extensions");
+		const toolNames = res.body.tools.map((t: { name: string }) => t.name);
+		expect(toolNames).toContain("act");
+		expect(toolNames).toContain("notify_then_send_to_customer");
+		expect(toolNames).toContain("escalate");
+		expect(toolNames).toContain("prep");
+		expect(toolNames).toContain("cancel_pending_action");
+		expect(toolNames).toContain("resolve_escalation");
+	});
+
+	it("GET /api/digest/counters returns the three-numbers headline", async () => {
+		const res = await request(app).get("/api/digest/counters");
+		expect(res.status).toBe(200);
+		expect(res.body.headline).toMatch(
+			/Yesterday: \d+ acts, \d+ notifies in-flight, \d+ escalations need you\./,
+		);
+		expect(res.body.counts.acts).toBeGreaterThanOrEqual(0);
+		expect(res.body.counts.notifies).toBeDefined();
+		expect(res.body.counts.escalations).toBeDefined();
+		expect(res.body.counts.preps).toBeGreaterThanOrEqual(0);
+	});
+
+	it("GET /api/ledger lists entries in a window", async () => {
+		const res = await request(app).get("/api/ledger");
+		expect(res.status).toBe(200);
+		expect(res.body.since).toBeDefined();
+		expect(res.body.until).toBeDefined();
+		expect(Array.isArray(res.body.entries)).toBe(true);
+	});
+
+	it("GET /api/ledger/open returns currently open entries", async () => {
+		const res = await request(app).get("/api/ledger/open");
+		expect(res.status).toBe(200);
+		expect(Array.isArray(res.body)).toBe(true);
+	});
+
+	it("POST /api/ledger/:id/cancel rejects unknown ids", async () => {
+		const res = await request(app)
+			.post("/api/ledger/unknown-id/cancel")
+			.send({ reason: "test" });
+		expect(res.status).toBe(404);
+	});
+
+	it("POST /api/ledger/:id/resolve rejects unknown ids", async () => {
+		const res = await request(app)
+			.post("/api/ledger/unknown-id/resolve")
+			.send({ outcome: "test" });
+		expect(res.status).toBe(404);
+	});
 });

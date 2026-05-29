@@ -25,16 +25,20 @@ Reversible, low-stakes, fact-based. The agent does these without asking. CSM see
 
 Customer-facing but routine. CSM gets a heads-up; agent sends unless paused inside a short window.
 
+The agent uses the `notify_then_send_to_customer` tool — it pings the CSM immediately and schedules the customer send for after the pause window. The dispatcher (`packages/server/src/dispatcher.ts`) executes the send unless the CSM calls `cancel_pending_action` first.
+
 | # | Work | Trigger | Pause | Ready today? |
 |---|---|---|---|---|
-| 13 | Routine monthly check-in to healthy customer | 30d silence, no risk signals | 4h | ❌ no send tool |
-| 14 | Feature-adoption nudge | Dormant feature with known value | 4h | ❌ no send tool |
-| 15 | Post-onboarding 30d touchpoint | New healthy account | 4h | ❌ no send tool |
-| 16 | Renewal nudge | Approaching renewal, normal health | 4h | ❌ no send tool |
-| 17 | Re-engagement attempt | Silent customer, no risk signals | 24h | ❌ no send tool |
-| 18 | EOY / Q-end relationship pulse | Seasonal, healthy book | 24h | ❌ no send tool |
+| 13 | Routine monthly check-in to healthy customer | 30d silence, no risk signals | 4h | ✅ (stub customer channel) |
+| 14 | Feature-adoption nudge | Dormant feature with known value | 4h | ✅ (stub customer channel) |
+| 15 | Post-onboarding 30d touchpoint | New healthy account | 4h | ✅ (stub customer channel) |
+| 16 | Renewal nudge | Approaching renewal, normal health | 4h | ✅ (stub customer channel) |
+| 17 | Re-engagement attempt | Silent customer, no risk signals | 24h | ✅ (stub customer channel) |
+| 18 | EOY / Q-end relationship pulse | Seasonal, healthy book | 24h | ✅ (stub customer channel) |
 | 19 | Aged-ticket nudge to support team | Internal escalation | 1h | ✅ (internal) |
 | 20 | Aged-feature-request nudge to engineering | Internal coordination | 1h | ✅ (internal) |
+
+The stub customer channel logs every send and counts it in the digest — wired identically to a real channel. Swapping in email/SMS/WeChat is a `CustomerChannel` implementation away.
 
 ## Escalate band (8)
 
@@ -68,9 +72,11 @@ CSM owns the conversation; agent ships a finished v1.
 | Band | Total | Ready today | Blocked |
 |---|---|---|---|
 | Act | 12 | 12 | 0 |
-| Notify-then-act | 8 | 2 | 6 (need customer-facing send tool) |
+| Notify-then-act | 8 | 8 | 0 (stubbed channel — swap for real channel later) |
 | Escalate | 8 | 8 | 0 |
 | Prep | 5 | 4 | 1 (deck builder) |
-| **Total** | **33** | **26** | **7** |
+| **Total** | **33** | **32** | **1** |
 
-**~80% of the work surface is unlocked today.** The biggest single gap is the customer-facing send tool, which unlocks 6 of the 7 blocked items.
+**~97% of the work surface is unlocked.** The remaining gap is QBR deck generation, which needs a slide-generation tool (e.g. Google Slides API or a markdown→pptx converter). Everything else flows through the four action-policy tools (`act`, `notify_then_send_to_customer`, `escalate`, `prep`) and the dispatcher.
+
+The customer channel is intentionally stubbed: real customer-facing send integrations (email, SMS, WeChat) drop in by implementing the `CustomerChannel` interface. The action policy, ledger, dispatcher, and digest are unaffected by which channel is wired.

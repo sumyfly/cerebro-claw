@@ -17,14 +17,16 @@ Every design decision is judged against this. If a feature reduces the work to "
 
 ## Action policy (the core IP)
 
-The agent classifies every action into one of four bands:
+The agent classifies every action into one of four bands. Each band has a tool:
 
-| Band | Behavior |
-|---|---|
-| **Act** | Just do it. Log what was done. CSM sees a summary. (CSP notes, instinct memory, internal pings, detection, prep artifacts.) |
-| **Notify-then-act** | Tell the CSM what's about to happen. Send unless paused in a short window. (Routine customer touches, renewal nudges.) |
-| **Escalate** | Don't send. Brief the CSM with full context and a recommended decision. (Discount, churn save, contract change.) |
-| **Prep** | Ship a finished v1 the CSM uses to drive a CSM-owned conversation. (Pre-call brief, QBR deck, renewal brief.) |
+| Band | Tool | Behavior |
+|---|---|---|
+| **Act** | `act` | Just do it. Log what was done. CSM sees it in the digest. (CSP notes, instinct memory, internal pings, detection.) |
+| **Notify-then-act** | `notify_then_send_to_customer` | Heads-up to CSM now, customer send after a pause window (default 4h). CSM cancels with `cancel_pending_action` if they disagree. (Routine touches, renewal nudges.) |
+| **Escalate** | `escalate` | Brief the CSM with situation + options + recommendation. CSM owns the decision; mark `resolve_escalation` after they choose. (Discount, churn save, contract change.) |
+| **Prep** | `prep` | Ship a finished v1 the CSM uses to drive a CSM-owned conversation. (Pre-call brief, QBR deck, renewal brief.) |
+
+Every call lands in the **action ledger** (SQLite `action_ledger` table). The digest endpoint `/api/digest/counters` reads the ledger to produce the daily headline ("Yesterday: 47 acts, 12 notifies in-flight, 2 escalations need you."). A **dispatcher** (`packages/server/src/dispatcher.ts`) polls every 60s for due notify-then-act entries and sends them through the registered `CustomerChannel`.
 
 ## Source docs
 
@@ -41,8 +43,8 @@ The agent classifies every action into one of four bands:
 - **Frontend:** React 19 + Ant Design 5
 - **Agent runtimes:** Anthropic SDK (production) or Claude Code subprocess (via MCP, no API key needed)
 - **LLM access via MCP:** `@modelcontextprotocol/sdk` HTTP server exposes our tools to any MCP client
-- **Memory:** SQLite (`better-sqlite3`) for both agent-private notes and pending actions; CSP is the source of truth for customer data
-- **Channels:** Lark IM (signature-verified webhook, interactive approval cards)
+- **Memory:** SQLite (`better-sqlite3`) for agent-private notes, pending actions, and the action ledger; CSP is the source of truth for customer data
+- **Channels:** Lark IM to the CSM (signature-verified webhook, interactive approval cards) + `CustomerChannel` interface for customer-facing sends (`StubCustomerChannel` by default)
 - **External data:** CSP backend at `cspapi.test.shub.us` via the `csp-connector` extension
 - **Testing:** Vitest
 - **Linting/formatting:** Biome
@@ -52,11 +54,11 @@ The agent classifies every action into one of four bands:
 ```
 .
 ├── packages/
-│   ├── shared/          # Types: Customer, MemoryStore, ChannelAdapter, ExtensionAPI, ToolDefinition
-│   ├── memory/          # In-memory + SQLite store implementations
-│   ├── tools/           # memory tools, message tools (draft/send), bash tool
+│   ├── shared/          # Types: Customer, MemoryStore, ActionLedger, CustomerChannel, ChannelAdapter, ExtensionAPI, ToolDefinition
+│   ├── memory/          # In-memory + SQLite implementations of MemoryStore and ActionLedger
+│   ├── tools/           # memory tools, message tools, bash tool, action-policy tools (act/notify/escalate/prep), StubCustomerChannel
 │   ├── channel-lark/    # ChannelAdapter for Lark with card builder and HMAC signature verify
-│   ├── server/          # Express app, extension host, MCP server, brain loop, router, runtimes
+│   ├── server/          # Express app, extension host, MCP server, brain loop, dispatcher, runtimes
 │   └── web/             # React + antd admin UI (Dashboard, Customers, Activity, Extensions)
 ├── extensions/
 │   ├── csp-connector/   # 9 csp_* tools (read + write-back) hitting cspapi.test.shub.us/api/v1
@@ -69,14 +71,16 @@ The agent classifies every action into one of four bands:
 └── Dockerfile + docker-compose.yml
 ```
 
-## Architecture — six modules
+## Architecture — eight modules
 
 1. **Agent Runtime** — `AgentBackend` interface implemented by `AgentRuntime` (Anthropic SDK, in-process tool calls) and `ClaudeCodeRuntime` (spawns `claude` with `--mcp-config` so the subprocess calls our tools over MCP — no Anthropic key needed).
-2. **Customer Memory** — `MemoryStore` interface, SQLite-backed in production. Four conceptual layers (profile, state, history, instinct) but profile/state are mostly delegated to CSP now; SQLite keeps agent-private observations + pending actions.
-3. **Brain Loop** — runs `agent.prompt()` per account each cycle. Pluggable `AccountSource`: `createLocalAccountSource(store)` for demo seed, `createCspAccountSource({…})` to iterate the CSM's real CSP portfolio.
-4. **Channel Layer** — every channel implements `ChannelAdapter`. Lark is the only built-in; new channels register through the extension host without touching `app.ts`.
-5. **Tool Layer** — every tool is a `ToolDefinition { name, description, parameters (JSON Schema), execute }`. Three categories: memory tools, message tools (draft → CSP card flow), bash tool (allowlisted commands). External extensions add more (csp-connector adds 9).
-6. **Extension Layer** — `ExtensionHost` loads built-ins + any factory in `extensions/`. Extensions register tools, channels, lifecycle event handlers. Filesystem loader (`extension-loader.ts`) scans `EXTENSIONS_DIR` at boot.
+2. **Customer Memory** — `MemoryStore` interface, SQLite-backed in production. Four conceptual layers (profile, state, history, instinct) but profile/state are mostly delegated to CSP now; SQLite keeps agent-private observations.
+3. **Action Ledger** — `ActionLedger` interface, SQLite-backed. Every act/notify/escalate/prep lands here. The digest reads from it; the dispatcher reads from it; the dashboard counters read from it.
+4. **Brain Loop** — runs `agent.prompt()` per account each cycle. Pluggable `AccountSource`: `createLocalAccountSource(store)` for demo seed, `createCspAccountSource({…})` to iterate the CSM's real CSP portfolio.
+5. **Dispatcher** — polls the ledger every 60s for due notify-then-act entries and sends them through the registered `CustomerChannel`. Failures are recorded back to the ledger (status `failed`, surfaced in the digest).
+6. **Channel Layer** — `ChannelAdapter` for CSM-facing channels (Lark today). `CustomerChannel` for the agent's outbound path to customers (`StubCustomerChannel` today; email/SMS to drop in later).
+7. **Tool Layer** — every tool is a `ToolDefinition { name, description, parameters (JSON Schema), execute }`. Categories: memory tools, action-policy tools (act/notify/escalate/prep/cancel/resolve), message tools (legacy draft → CSP card flow), bash tool. External extensions add more (csp-connector adds 9).
+8. **Extension Layer** — `ExtensionHost` loads built-ins + any factory in `extensions/`. Extensions register tools, channels, lifecycle event handlers. Filesystem loader (`extension-loader.ts`) scans `EXTENSIONS_DIR` at boot.
 
 ## How Claude Code mode works (no API key)
 
@@ -122,7 +126,7 @@ Pure proxy — no local mirror of CSP data. Each call hits CSP live. Business ID
 pnpm install                                # install
 pnpm turbo build                            # build all packages
 pnpm turbo dev                              # server + web in watch mode
-pnpm turbo test                             # run tests (151 across 4 packages)
+pnpm turbo test                             # run tests (190 across 4 packages)
 cd packages/server && pnpm seed             # seed 4 demo customers (demo mode only)
 ```
 
@@ -149,3 +153,5 @@ See `.env.example` for the full list. The important ones:
 | `ADMIN_TOKEN` | Bearer auth on `/api/*` (admin API is open without it — dev only) |
 | `BASH_ALLOWLIST`, `BASH_TIMEOUT_MS` | Bash tool sandboxing |
 | `EXTENSIONS_DIR` | Where filesystem extension loader scans (default `./extensions`) |
+| `DISPATCHER_INTERVAL_MS` | How often the notify-then-act dispatcher polls (default 60s) |
+| `DEFAULT_PAUSE_MINUTES` | Default pause window for `notify_then_send_to_customer` (default 240 = 4h) |
