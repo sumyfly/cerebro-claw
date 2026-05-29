@@ -1,100 +1,122 @@
 # Cerebro Claw
 
-A CSM AI colleague — an always-on server agent that remembers customers, thinks on a schedule, and talks to CSMs through Lark. Agent by default, assistant when asked.
+A CSM AI colleague — an always-on server agent that remembers customers, thinks on a schedule, talks to CSMs through Lark, and reads/writes the Customer Success Platform (CSP) backend. Agent by default, assistant when asked.
 
-See `docs/csm-ai-colleague-product-vision.md` for full product vision and architecture.
+See `docs/csm-ai-colleague-product-vision.md` for the product vision and `docs/setup.md` for getting it running.
 
 ## Tech Stack
 
-- **Language:** TypeScript (strict, ESM)
-- **Monorepo:** Turborepo (`turbo`)
-- **Package Manager:** pnpm
-- **Backend:** Express
-- **Frontend:** React + Ant Design (antd)
-- **Agent Runtime:** `@earendil-works/pi-agent-core` (loop, tools, events)
-- **LLM Layer:** `@earendil-works/pi-ai` (multi-provider, start with Claude)
-- **Channel:** Lark Bot SDK
-- **Database:** Postgres (profile, state) + vector store (history, instinct)
+- **Language:** TypeScript (strict, ESM, Node 22+)
+- **Monorepo:** Turborepo + pnpm workspaces
+- **Backend:** Express 5
+- **Frontend:** React 19 + Ant Design 5
+- **Agent runtimes:** Anthropic SDK (production) or Claude Code subprocess (via MCP, no API key needed)
+- **LLM access via MCP:** `@modelcontextprotocol/sdk` HTTP server exposes our tools to any MCP client
+- **Memory:** SQLite (`better-sqlite3`) for both agent-private notes and pending actions; CSP is the source of truth for customer data
+- **Channels:** Lark IM (signature-verified webhook, interactive approval cards)
+- **External data:** CSP backend at `cspapi.test.shub.us` via the `csp-connector` extension
 - **Testing:** Vitest
-- **Linting:** Biome
+- **Linting/formatting:** Biome
 
-## Monorepo Structure
+## Layout
 
 ```
-cerebro-claw/
-├── CLAUDE.md
-├── turbo.json
-├── package.json
+.
 ├── packages/
-│   ├── server/          # Express backend — gateway, brain loop, router
-│   ├── web/             # React + antd admin UI
-│   ├── memory/          # Customer memory (4 layers: profile, history, state, instinct)
-│   ├── channel-lark/    # Lark bot channel extension
-│   ├── tools/           # Custom CSM tools (crm, tickets, usage, drafts)
-│   └── shared/          # Shared types, utils, config
-├── extensions/          # Pi-style extensions (future channel/CRM/ticketing adapters)
+│   ├── shared/          # Types: Customer, MemoryStore, ChannelAdapter, ExtensionAPI, ToolDefinition
+│   ├── memory/          # In-memory + SQLite store implementations
+│   ├── tools/           # memory tools, message tools (draft/send), bash tool
+│   ├── channel-lark/    # ChannelAdapter for Lark with card builder and HMAC signature verify
+│   ├── server/          # Express app, extension host, MCP server, brain loop, router, runtimes
+│   └── web/             # React + antd admin UI (Dashboard, Customers, Activity, Extensions)
+├── extensions/
+│   ├── csp-connector/   # 9 csp_* tools (read + write-back) hitting cspapi.test.shub.us/api/v1
+│   └── sample-greeting/ # Demo extension showing the loader pattern
 ├── docs/
-│   └── csm-ai-colleague-product-vision.md
-└── .env.example
+│   ├── csm-ai-colleague-product-vision.md
+│   ├── setup.md
+│   └── ui-verification.md
+├── .github/workflows/ci.yml
+└── Dockerfile + docker-compose.yml
 ```
 
-## Architecture
+## Architecture — six modules
 
-Six modules:
+1. **Agent Runtime** — `AgentBackend` interface implemented by `AgentRuntime` (Anthropic SDK, in-process tool calls) and `ClaudeCodeRuntime` (spawns `claude` with `--mcp-config` so the subprocess calls our tools over MCP — no Anthropic key needed).
+2. **Customer Memory** — `MemoryStore` interface, SQLite-backed in production. Four conceptual layers (profile, state, history, instinct) but profile/state are mostly delegated to CSP now; SQLite keeps agent-private observations + pending actions.
+3. **Brain Loop** — runs `agent.prompt()` per account each cycle. Pluggable `AccountSource`: `createLocalAccountSource(store)` for demo seed, `createCspAccountSource({…})` to iterate the CSM's real CSP portfolio.
+4. **Channel Layer** — every channel implements `ChannelAdapter`. Lark is the only built-in; new channels register through the extension host without touching `app.ts`.
+5. **Tool Layer** — every tool is a `ToolDefinition { name, description, parameters (JSON Schema), execute }`. Three categories: memory tools, message tools (draft → CSP card flow), bash tool (allowlisted commands). External extensions add more (csp-connector adds 9).
+6. **Extension Layer** — `ExtensionHost` loads built-ins + any factory in `extensions/`. Extensions register tools, channels, lifecycle event handlers. Filesystem loader (`extension-loader.ts`) scans `EXTENSIONS_DIR` at boot.
 
-1. **Agent Runtime** — `@earendil-works/pi-agent-core`. The agent loop, tool execution, steering, events. We build on `pi-agent-core`, not `pi-coding-agent` — this is a CSM agent, not a coding agent.
-2. **Customer Memory** — four layers (profile, history, state, instinct). Exposed to the agent as tools: `memory_read`, `memory_search`, `memory_update`, `memory_instinct`.
-3. **Brain Loop** — scheduler that wakes up, loads customer context, calls `agent.prompt()` for each customer. The LLM judges what needs doing — not hardcoded rules.
-4. **Channel Layer** — modular. Lark is the first and only channel. Each channel is a Pi extension registering inbound/outbound handlers.
-5. **Tool Layer** — three categories: built-in (read, write, grep, find), custom CSM tools (crm_lookup, ticket_search, usage_query, draft_message), CLI tools (Pi's bash tool).
-6. **Extension Layer** — everything pluggable is a Pi extension. Channel adapters, CRM connectors, ticketing connectors, custom behaviors.
+## How Claude Code mode works (no API key)
 
-## Tech References
+Pattern borrowed from Paseo. Server runs an HTTP MCP endpoint at `POST /mcp`. When `ClaudeCodeRuntime` spawns `claude`, it:
 
-- [Pi SDK](https://github.com/earendil-works/pi) — agent runtime, tool system, extension system
-- [OpenClaw](https://github.com/openclaw/openclaw) — session-per-customer, channel routing, gateway patterns
-- [Paseo](https://github.com/getpaseo/paseo) — remote agent orchestration, process model
+1. Writes a one-line MCP config file to `tmpdir` referencing `http://127.0.0.1:{port}/mcp`
+2. Passes `--mcp-config <path>` and `--allowed-tools mcp__cerebro-claw__*` to suppress per-call approval prompts
+3. Claude Code connects, calls `tools/list`, discovers everything our extension host has registered
+4. Each tool call is a `POST /mcp` against the same server — Claude Code's reasoning, our tool implementations, user's Claude Code login for inference
 
-## Key Decisions
+Verified end-to-end against CSP: chat turn "What is the health status of 16chillgrill?" runs in ~60s, agent calls `csp_get_account`/`csp_get_health_score`/`csp_get_engagement` over MCP, produces a CSM-grade brief with real data.
 
-- **Session per customer** (OpenClaw pattern) — one persistent agent session per customer relationship
-- **Channels as extensions** (OpenClaw pattern) — start with Lark, add more without touching core
-- **Brain loop as agent** (Pi SDK) — the loop itself calls `agent.prompt()`, LLM decides what to do
-- **CLI tools via bash** (Pi SDK) — Pi's bash tool for running any CLI command
-- **Router** (OpenClaw pattern) — channel + account → customer session mapping
+## Runtime selection
+
+Set `RUNTIME=anthropic` (default) or `RUNTIME=claude-code`. Both use the same `host.getTools()` surface — only how they reach Claude differs.
+
+| Runtime | Inference auth | Tool transport | First-turn latency | Persona |
+|---|---|---|---|---|
+| `anthropic` | `ANTHROPIC_API_KEY` | In-process function call | ~5-10s | CSM-flavored via system prompt |
+| `claude-code` | Your Claude Code login | HTTP MCP server | ~60s (subprocess + TLS) | Mixed — Claude Code base + `--append-system-prompt` add-on |
+
+## CSP integration
+
+`extensions/csp-connector/index.ts` exposes 9 tools that proxy directly to the CSP HTTP API:
+
+| Tool | Endpoint |
+|---|---|
+| `csp_list_my_accounts` | `GET /api/v1/accounts?assignedCsmId=` |
+| `csp_get_account` | `GET /api/v1/accounts/:id` |
+| `csp_get_health_score` | `GET /api/v1/accounts/:id/health-score` |
+| `csp_get_engagement` | `GET /api/v1/accounts/:id/engagement` |
+| `csp_get_notes` | `GET /api/v1/notes?businessId=` |
+| `csp_create_note` (write-back) | `POST /api/v1/notes` |
+| `csp_delete_note` (write-back) | `POST /api/v1/notes/:id/delete` |
+| `csp_get_renewals` | `GET /api/v1/accounts/:id/renewals` |
+| `csp_get_renewal` | `GET /api/v1/renewals/:id` (UUID) |
+
+Pure proxy — no local mirror of CSP data. Each call hits CSP live. Business IDs validated as 24-char hex; renewal IDs as UUID. 10s default timeout (`CSP_TIMEOUT_MS`). When `CSP_TOKEN` and `CSP_CSM_EMAIL` are set, the brain loop's account source switches to CSP automatically; otherwise it falls back to the local seed store (demo mode).
 
 ## Commands
 
 ```bash
-pnpm install              # install dependencies
-pnpm turbo build          # build all packages
-pnpm turbo dev            # dev mode (server + web)
-pnpm turbo test           # run tests
-pnpm turbo lint           # lint all packages
+pnpm install                                # install
+pnpm turbo build                            # build all packages
+pnpm turbo dev                              # server + web in watch mode
+pnpm turbo test                             # run tests (151 across 4 packages)
+cd packages/server && pnpm seed             # seed 4 demo customers (demo mode only)
 ```
 
 ## Conventions
 
-- All packages use TypeScript strict mode with ESM
-- Use Biome for formatting and linting, not Prettier/ESLint
-- Use Vitest for testing, not Jest
-- Tool definitions use TypeBox for JSON schema parameter validation
-- One export per file preferred, barrel exports in `index.ts`
-- No default exports — use named exports only
-- Environment variables go in `.env`, never committed. Use `.env.example` as template.
-- Keep packages loosely coupled — communicate through well-defined interfaces, not direct imports across package boundaries (except `shared/`)
+- TypeScript strict + ESM everywhere
+- Biome (not Prettier/ESLint), Vitest (not Jest)
+- Tool definitions use plain JSON Schema (not Zod) — same wire format as MCP
+- Extensions go in `extensions/<name>/index.ts` with a default-exported `Extension { id, factory }`
+- `.env` is gitignored; use `.env.example` as the template
+- Cross-package communication via the `@cerebro-claw/shared` types only — no other cross-package imports
 
-## Agent Tools
+## Environment
 
-Custom tools follow Pi's `ToolDefinition` pattern:
+See `.env.example` for the full list. The important ones:
 
-- `memory_read` — read customer profile/state
-- `memory_search` — semantic search across history/instinct
-- `memory_update` — update customer state
-- `memory_instinct` — store CSM's informal knowledge about a customer
-- `crm_lookup` / `crm_update` — customer records in CRM
-- `ticket_search` — find open support tickets
-- `usage_query` — pull product usage metrics
-- `draft_message` — prepare a message for CSM review
-- `send_message` — send via channel (requires CSM approval)
-- `bash` — run CLI commands (Pi's built-in bash tool)
+| Variable | Used by |
+|---|---|
+| `ANTHROPIC_API_KEY` | Anthropic runtime |
+| `RUNTIME=claude-code` | Switches to subprocess + MCP, no API key needed |
+| `CSP_BASE_URL`, `CSP_TOKEN`, `CSP_CSM_EMAIL` | csp-connector + brain loop's CSP account source |
+| `LARK_APP_ID`, `LARK_APP_SECRET`, `LARK_VERIFICATION_TOKEN` | Lark channel |
+| `DEFAULT_CSM_LARK_USER_ID` | Where approval cards go when a customer has no `csmLarkUserId` set |
+| `ADMIN_TOKEN` | Bearer auth on `/api/*` (admin API is open without it — dev only) |
+| `BASH_ALLOWLIST`, `BASH_TIMEOUT_MS` | Bash tool sandboxing |
+| `EXTENSIONS_DIR` | Where filesystem extension loader scans (default `./extensions`) |
