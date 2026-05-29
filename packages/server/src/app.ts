@@ -120,6 +120,9 @@ export async function createApp(): Promise<AppHandles> {
 					baseUrl: process.env.CSP_BASE_URL ?? "http://localhost:5656",
 					token: process.env.CSP_TOKEN,
 					csmEmail: process.env.CSP_CSM_EMAIL,
+					maxAccounts: process.env.CSP_MAX_ACCOUNTS
+						? Number(process.env.CSP_MAX_ACCOUNTS)
+						: undefined,
 				})
 			: undefined;
 
