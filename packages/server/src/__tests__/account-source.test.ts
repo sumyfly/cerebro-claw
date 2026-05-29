@@ -123,7 +123,7 @@ describe("createCspAccountSource", () => {
 		expect(list).toEqual([]);
 	});
 
-	it("buildSummary is a pointer prompt telling the agent to fetch live data", async () => {
+	it("buildSummary is a pointer prompt telling the agent to fetch live data and steer through the action policy", async () => {
 		const src = createCspAccountSource({
 			baseUrl: "http://csp.test",
 			token: "tok",
@@ -134,5 +134,10 @@ describe("createCspAccountSource", () => {
 		expect(summary).toContain("biz-id-123");
 		expect(summary).toContain("csp_get_account");
 		expect(summary).toContain("csp_get_health_score");
+		// Action-policy bands must be on the menu so the agent picks one.
+		expect(summary).toMatch(/\bact\b/);
+		expect(summary).toContain("notify_then_send_to_customer");
+		expect(summary).toContain("escalate");
+		expect(summary).toContain("prep");
 	});
 });

@@ -113,9 +113,15 @@ export function createCspAccountSource(opts: CspAccountSourceOptions): AccountSo
 			return [
 				`You are about to review customer "${companyName}" (CSP business id: ${id}).`,
 				"",
-				"Fetch the live data yourself using csp_get_account, csp_get_health_score, and csp_get_engagement. Use csp_get_notes for recent context.",
+				"Fetch the live data yourself using csp_get_account, csp_get_health_score, and csp_get_engagement. Use csp_get_notes for recent context and csp_get_renewals if a renewal is close.",
 				"",
-				"If you spot something that needs attention — health dropping, renewal close, dormant features, missed follow-up — alert the CSM with send_message or draft a customer-facing message with draft_message. If everything looks fine, just say so and move on.",
+				"Then pick the right band from the action policy:",
+				"- act — log something you noticed (CSP note, instinct).",
+				"- notify_then_send_to_customer — routine touch the customer needs (heads-up to CSM first).",
+				"- escalate — high-stakes/ambiguous call; brief the CSM with options + recommendation.",
+				"- prep — finished v1 artifact for a CSM-owned conversation.",
+				"",
+				"If nothing needs doing, just say so and move on. Don't draft and wait — that's the bug, not the feature.",
 			].join("\n");
 		},
 	};
@@ -174,16 +180,19 @@ export class BrainLoop {
 			accounts.map((a) => this.source.buildSummary(a.id, a.companyName)),
 		);
 
-		const prompt = `You are preparing a daily briefing for the CSM. Here are their customers:
+		const prompt = `You are preparing the daily digest for the CSM. Their accounts:
 
 ${summaries.join("\n\n---\n\n")}
 
-Write a concise daily digest that:
-1. Highlights what needs immediate attention (critical health, approaching renewals, usage drops)
-2. Lists what's going well
-3. Suggests 2-3 specific actions for today
+Produce the headline in exactly this format, filling in real counts from today's ledger:
+"Yesterday: N acts, M notifies in-flight, K escalations need you."
 
-Format it as a brief that a busy CSM can scan in 30 seconds. Use the tools to send the digest to the CSM or draft any urgent messages.`;
+Then list:
+1. Escalations needing the CSM (≤5). Each: customer, situation in one line, your recommendation.
+2. Top notifies in flight (≤5).
+3. What's going well — one line.
+
+Be terse. The CSM scans this in 30 seconds. If you need to take additional action while writing the digest, use the matching action-policy tool (act / notify_then_send_to_customer / escalate / prep). Do not draft messages and wait.`;
 
 		const response = await this.agent.prompt(prompt, undefined, "brain:digest");
 		return response.text;
@@ -221,13 +230,17 @@ Format it as a brief that a busy CSM can scan in 30 seconds. Use the tools to se
 	private async evaluateCustomer(customerId: string, companyName: string): Promise<void> {
 		const summary = await this.source.buildSummary(customerId, companyName);
 
-		const prompt = `You are reviewing customer "${companyName}". Based on the context below, decide if any action is needed right now.
+		const prompt = `You are reviewing customer "${companyName}". Decide if any action is needed right now.
 
 ${summary}
 
-If something needs attention, use the appropriate tools (send_message to alert the CSM, memory_update or csp_create_note to log, draft_message for customer-facing communication).
+Pick the right band from the action policy:
+- act — log something you noticed (csp_create_note for team-visible, memory_instinct for agent-private).
+- notify_then_send_to_customer — routine customer-facing touch (heads-up to CSM, dispatched after pause window).
+- escalate — high-stakes or ambiguous (brief CSM with options + recommendation).
+- prep — finished v1 artifact for a CSM-owned conversation.
 
-If everything looks fine, just say "No action needed for ${companyName}." and move on.`;
+If nothing needs doing, say "No action needed for ${companyName}." and move on.`;
 
 		try {
 			const response = await this.agent.prompt(prompt, undefined, `brain:${customerId}`);
