@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ToolDefinition } from "@cerebro-claw/shared";
 import type { AgentResponse } from "./agent-runtime.js";
 
@@ -21,12 +24,45 @@ export class ClaudeCodeRuntime {
 	private sessions = new Map<string, string>(); // our sessionId → Claude Code session_id
 	private model: string;
 	private claudeBinary: string;
-	private tools: ToolDefinition[]; // ignored; kept for parity with AgentRuntime
+	private tools: ToolDefinition[];
+	private mcpConfigPath: string | null;
+	private allowedToolPatterns: string[];
 
-	constructor(model: string, tools: ToolDefinition[], claudeBinary = "claude") {
+	constructor(
+		model: string,
+		tools: ToolDefinition[],
+		claudeBinary = "claude",
+		mcpUrl?: string,
+	) {
 		this.model = model;
 		this.tools = tools;
 		this.claudeBinary = claudeBinary;
+
+		// If an MCP URL is provided, write an MCP config file the subprocess can
+		// load via --mcp-config. The spawned `claude` will discover our tools
+		// from this endpoint and call them natively over MCP — no Anthropic key
+		// needed (the user's Claude Code login handles inference).
+		if (mcpUrl) {
+			const dir = mkdtempSync(join(tmpdir(), "cerebro-claw-mcp-"));
+			this.mcpConfigPath = join(dir, "mcp-config.json");
+			writeFileSync(
+				this.mcpConfigPath,
+				JSON.stringify({
+					mcpServers: {
+						"cerebro-claw": { type: "http", url: mcpUrl },
+					},
+				}),
+			);
+			// Allow Claude Code to call any tool that came from our MCP server
+			// without prompting for approval on each call.
+			this.allowedToolPatterns = tools.map((t) => `mcp__cerebro-claw__${t.name}`);
+			console.log(
+				`[claude-code-runtime] MCP config: ${this.mcpConfigPath} (${tools.length} tools exposed)`,
+			);
+		} else {
+			this.mcpConfigPath = null;
+			this.allowedToolPatterns = [];
+		}
 	}
 
 	getOrCreateSession(sessionId: string): string[] {
@@ -73,6 +109,12 @@ export class ClaudeCodeRuntime {
 		}
 		if (context) args.push("--append-system-prompt", context);
 		if (claudeSessionId) args.push("--resume", claudeSessionId);
+		if (this.mcpConfigPath) {
+			args.push("--mcp-config", this.mcpConfigPath);
+			if (this.allowedToolPatterns.length > 0) {
+				args.push("--allowed-tools", this.allowedToolPatterns.join(","));
+			}
+		}
 
 		return new Promise<AgentResponse>((resolve, reject) => {
 			const child = spawn(this.claudeBinary, args);

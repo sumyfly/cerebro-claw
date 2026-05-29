@@ -5,6 +5,7 @@ import type { MemoryStore, PendingAction } from "@cerebro-claw/shared";
 import { SqliteStore } from "@cerebro-claw/memory";
 import { AgentRuntime, type AgentBackend } from "./agent-runtime.js";
 import { ClaudeCodeRuntime } from "./claude-code-runtime.js";
+import { createMcpHandler } from "./mcp-server.js";
 import { Router } from "./router.js";
 import { BrainLoop } from "./brain-loop.js";
 import { loadConfig } from "./config.js";
@@ -93,10 +94,16 @@ export async function createApp(): Promise<AppHandles> {
 		...userExtensions,
 	]);
 
+	// MCP endpoint — exposes our tools to any external MCP client (Claude Code
+	// subprocess, Cursor, etc.). The Claude Code runtime uses this to call our
+	// tools without an Anthropic API key.
+	app.post("/mcp", createMcpHandler({ tools: () => host.getTools() }));
+
 	// Agent runtime — Anthropic SDK (default) or Claude Code subprocess
+	const mcpUrl = `http://127.0.0.1:${config.port}/mcp`;
 	const agent: AgentBackend =
 		config.runtime === "claude-code"
-			? new ClaudeCodeRuntime(config.model, host.getTools(), config.claudeBinary)
+			? new ClaudeCodeRuntime(config.model, host.getTools(), config.claudeBinary, mcpUrl)
 			: new AgentRuntime(config.anthropicApiKey, config.model, host.getTools());
 	console.log(`[runtime] Using ${config.runtime}`);
 

@@ -16,6 +16,7 @@
     "@cerebro-claw/memory": "workspace:*",
     "@cerebro-claw/shared": "workspace:*",
     "@cerebro-claw/tools": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "express": "^5.1.0"
   },
   "devDependencies": {
