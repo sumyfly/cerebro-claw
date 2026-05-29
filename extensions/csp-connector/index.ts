@@ -20,6 +20,8 @@
  *   - csp_get_renewal
  */
 
+import type { Extension } from "@cerebro-claw/shared";
+
 const NOTE_TYPES = [
 	"GENERAL",
 	"MEETING",
@@ -32,17 +34,25 @@ const NOTE_TYPES = [
 ] as const;
 const PRIORITIES = ["LOW", "NORMAL", "HIGH", "URGENT"] as const;
 
-import type { Extension } from "@cerebro-claw/shared";
-
 const DEFAULT_BASE = "http://localhost:5656";
+const API_PREFIX = "/api/v1";
+const DEFAULT_TIMEOUT_MS = 10_000;
+const BUSINESS_ID_RE = /^[a-f\d]{24}$/i;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function configFromEnv(getConfig: () => Record<string, string>) {
-	const env = getConfig();
+function configFromEnv() {
 	return {
-		baseUrl: (env.CSP_BASE_URL ?? process.env.CSP_BASE_URL ?? DEFAULT_BASE).replace(/\/$/, ""),
-		token: env.CSP_TOKEN ?? process.env.CSP_TOKEN ?? "",
-		defaultCsmEmail: env.CSP_CSM_EMAIL ?? process.env.CSP_CSM_EMAIL ?? "",
+		baseUrl: (process.env.CSP_BASE_URL ?? DEFAULT_BASE).replace(/\/$/, ""),
+		token: process.env.CSP_TOKEN ?? "",
+		defaultCsmEmail: process.env.CSP_CSM_EMAIL ?? "",
+		timeoutMs: Number(process.env.CSP_TIMEOUT_MS ?? DEFAULT_TIMEOUT_MS),
 	};
+}
+
+function clampLimit(value: unknown, defaultValue: number, max: number): number {
+	const n = Math.floor(Number(value ?? defaultValue));
+	if (!Number.isFinite(n) || n <= 0) return defaultValue;
+	return Math.min(n, max);
 }
 
 interface CspResponse {
@@ -54,27 +64,36 @@ interface CspResponse {
 async function cspFetch(
 	baseUrl: string,
 	token: string,
-	path: string,
-	init: RequestInit = {},
+	apiPath: string,
+	init: RequestInit & { timeoutMs?: number } = {},
 ): Promise<CspResponse> {
 	if (!token) {
 		return {
 			ok: false,
 			status: 0,
 			body: {
-				error: "CSP_TOKEN not configured. Set it in your environment to enable CSP queries.",
+				error:
+					"CSP integration not configured (CSP_TOKEN missing). Fall back to memory_* tools.",
 			},
 		};
 	}
+	const ac = new AbortController();
+	const timeoutMs = init.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+	const timeout = setTimeout(() => ac.abort(), timeoutMs);
 	try {
-		const url = `${baseUrl}${path.startsWith("/") ? path : `/${path}`}`;
+		const path = apiPath.startsWith("/") ? apiPath : `/${apiPath}`;
+		const url = `${baseUrl}${API_PREFIX}${path}`;
 		const headers: Record<string, string> = {
 			Authorization: `Bearer ${token}`,
 			Accept: "application/json",
 		};
 		if (init.body) headers["Content-Type"] = "application/json";
 
-		const res = await fetch(url, { ...init, headers: { ...headers, ...(init.headers as Record<string, string> | undefined) } });
+		const res = await fetch(url, {
+			...init,
+			signal: ac.signal,
+			headers: { ...headers, ...(init.headers as Record<string, string> | undefined) },
+		});
 		const text = await res.text();
 		let body: unknown = text;
 		try {
@@ -84,18 +103,25 @@ async function cspFetch(
 		}
 		return { ok: res.ok, status: res.status, body };
 	} catch (err) {
-		return {
-			ok: false,
-			status: 0,
-			body: { error: `CSP request failed: ${(err as Error).message}` },
-		};
+		const e = err as Error & { name?: string };
+		const message =
+			e.name === "AbortError"
+				? `CSP request timed out after ${timeoutMs}ms`
+				: `CSP request failed: ${e.message}`;
+		return { ok: false, status: 0, body: { error: message } };
+	} finally {
+		clearTimeout(timeout);
 	}
 }
 
 const extension: Extension = {
 	id: "csp-connector",
 	factory: (api) => {
-		const cfg = configFromEnv(api.getConfig);
+		const cfg = configFromEnv();
+
+		// Convenience wrapper so each tool doesn't have to thread cfg + timeout.
+		const call = (path: string, init: RequestInit = {}) =>
+			cspFetch(cfg.baseUrl, cfg.token, path, { ...init, timeoutMs: cfg.timeoutMs });
 
 		if (!cfg.token) {
 			console.warn(
@@ -125,9 +151,9 @@ const extension: Extension = {
 				const qs = new URLSearchParams();
 				if (csmEmail) qs.set("assignedCsmId", csmEmail);
 				if (params.search) qs.set("search", params.search as string);
-				qs.set("limit", String(Math.min(Number(params.limit ?? 20), 100)));
+				qs.set("limit", String(clampLimit(params.limit, 20, 100)));
 
-				const res = await cspFetch(cfg.baseUrl, cfg.token, `/api/accounts?${qs}`);
+				const res = await call(`/accounts?${qs}`);
 				if (!res.ok) {
 					return {
 						content: `CSP error ${res.status}: ${JSON.stringify(res.body)}`,
@@ -158,10 +184,10 @@ const extension: Extension = {
 			},
 			async execute(params) {
 				const id = String(params.business_id);
-				if (!/^[a-f\d]{24}$/i.test(id)) {
+				if (!BUSINESS_ID_RE.test(id)) {
 					return { content: `Invalid business_id (expected 24-char hex): ${id}`, success: false };
 				}
-				const res = await cspFetch(cfg.baseUrl, cfg.token, `/api/accounts/${id}`);
+				const res = await call(`/accounts/${id}`);
 				if (!res.ok) {
 					return {
 						content: `CSP error ${res.status}: ${JSON.stringify(res.body)}`,
@@ -191,10 +217,10 @@ const extension: Extension = {
 			},
 			async execute(params) {
 				const id = String(params.business_id);
-				if (!/^[a-f\d]{24}$/i.test(id)) {
+				if (!BUSINESS_ID_RE.test(id)) {
 					return { content: `Invalid business_id (expected 24-char hex): ${id}`, success: false };
 				}
-				const res = await cspFetch(cfg.baseUrl, cfg.token, `/api/accounts/${id}/health-score`);
+				const res = await call(`/accounts/${id}/health-score`);
 				if (!res.ok) {
 					return {
 						content: `CSP error ${res.status}: ${JSON.stringify(res.body)}`,
@@ -218,10 +244,10 @@ const extension: Extension = {
 			},
 			async execute(params) {
 				const id = String(params.business_id);
-				if (!/^[a-f\d]{24}$/i.test(id)) {
+				if (!BUSINESS_ID_RE.test(id)) {
 					return { content: `Invalid business_id (expected 24-char hex): ${id}`, success: false };
 				}
-				const res = await cspFetch(cfg.baseUrl, cfg.token, `/api/accounts/${id}/engagement`);
+				const res = await call(`/accounts/${id}/engagement`);
 				if (!res.ok) {
 					return { content: `CSP error ${res.status}: ${JSON.stringify(res.body)}`, success: false };
 				}
@@ -249,18 +275,18 @@ const extension: Extension = {
 			},
 			async execute(params) {
 				const id = String(params.business_id);
-				if (!/^[a-f\d]{24}$/i.test(id)) {
+				if (!BUSINESS_ID_RE.test(id)) {
 					return { content: `Invalid business_id (expected 24-char hex): ${id}`, success: false };
 				}
 				const qs = new URLSearchParams();
 				qs.set("businessId", id);
 				if (params.search) qs.set("search", String(params.search));
 				if (params.type) qs.set("type", String(params.type));
-				qs.set("pageSize", String(Math.min(Number(params.limit ?? 10), 50)));
+				qs.set("pageSize", String(clampLimit(params.limit, 10, 50)));
 				qs.set("sortBy", "createdAt");
 				qs.set("sortOrder", "desc");
 
-				const res = await cspFetch(cfg.baseUrl, cfg.token, `/api/notes?${qs}`);
+				const res = await call(`/notes?${qs}`);
 				if (!res.ok) {
 					return { content: `CSP error ${res.status}: ${JSON.stringify(res.body)}`, success: false };
 				}
@@ -298,7 +324,7 @@ const extension: Extension = {
 			},
 			async execute(params) {
 				const id = String(params.business_id);
-				if (!/^[a-f\d]{24}$/i.test(id)) {
+				if (!BUSINESS_ID_RE.test(id)) {
 					return { content: `Invalid business_id (expected 24-char hex): ${id}`, success: false };
 				}
 				const body: Record<string, unknown> = {
@@ -311,7 +337,7 @@ const extension: Extension = {
 				if (params.is_private !== undefined) body.isPrivate = Boolean(params.is_private);
 				if (params.renewal_id) body.renewalId = String(params.renewal_id);
 
-				const res = await cspFetch(cfg.baseUrl, cfg.token, "/api/notes", {
+				const res = await call("/notes", {
 					method: "POST",
 					body: JSON.stringify(body),
 				});
@@ -340,18 +366,14 @@ const extension: Extension = {
 			},
 			async execute(params) {
 				const id = String(params.business_id);
-				if (!/^[a-f\d]{24}$/i.test(id)) {
+				if (!BUSINESS_ID_RE.test(id)) {
 					return { content: `Invalid business_id (expected 24-char hex): ${id}`, success: false };
 				}
 				const qs = new URLSearchParams();
 				if (params.status) qs.set("status", String(params.status));
-				qs.set("pageSize", String(Math.min(Number(params.limit ?? 10), 50)));
+				qs.set("pageSize", String(clampLimit(params.limit, 10, 50)));
 
-				const res = await cspFetch(
-					cfg.baseUrl,
-					cfg.token,
-					`/api/accounts/${id}/renewals?${qs}`,
-				);
+				const res = await call(`/accounts/${id}/renewals?${qs}`);
 				if (!res.ok) {
 					return { content: `CSP error ${res.status}: ${JSON.stringify(res.body)}`, success: false };
 				}
@@ -362,20 +384,26 @@ const extension: Extension = {
 		api.registerTool({
 			name: "csp_get_renewal",
 			description:
-				"Fetch a single renewal record by its ID. Returns full detail including status history, playbook progress, owner, ARR.",
+				"Fetch a single renewal record by its ID (UUID). Returns full detail including status history, playbook progress, owner, ARR.",
 			parameters: {
 				type: "object",
 				properties: {
-					renewal_id: { type: "string", description: "The CSP renewal id (24-char hex)." },
+					renewal_id: {
+						type: "string",
+						description: "The CSP renewal id (UUID, 36 chars with dashes).",
+					},
 				},
 				required: ["renewal_id"],
 			},
 			async execute(params) {
 				const id = String(params.renewal_id);
-				if (!/^[a-f\d]{24}$/i.test(id)) {
-					return { content: `Invalid renewal_id (expected 24-char hex): ${id}`, success: false };
+				if (!UUID_RE.test(id)) {
+					return {
+						content: `Invalid renewal_id (expected UUID): ${id}`,
+						success: false,
+					};
 				}
-				const res = await cspFetch(cfg.baseUrl, cfg.token, `/api/renewals/${id}`);
+				const res = await call(`/renewals/${id}`);
 				if (!res.ok) {
 					return { content: `CSP error ${res.status}: ${JSON.stringify(res.body)}`, success: false };
 				}
