@@ -34,6 +34,17 @@ interface PendingAction {
 	createdAt: string;
 }
 
+interface DigestCounters {
+	headline: string;
+	counts: {
+		windowHours: number;
+		acts: number;
+		notifies: { inFlight: number; executed: number; cancelled: number; failed: number };
+		escalations: { needsCsm: number; resolved: number };
+		preps: number;
+	};
+}
+
 const healthColor: Record<string, string> = {
 	good: "green",
 	"at-risk": "orange",
@@ -63,6 +74,7 @@ export function Dashboard() {
 	const [actions, setActions] = useState<PendingAction[]>([]);
 	const [digest, setDigest] = useState<string | null>(null);
 	const [digestLoading, setDigestLoading] = useState(false);
+	const [counters, setCounters] = useState<DigestCounters | null>(null);
 	const navigate = useNavigate();
 
 	async function runDigest() {
@@ -90,6 +102,10 @@ export function Dashboard() {
 		fetch("/api/actions")
 			.then((r) => r.json())
 			.then(setActions)
+			.catch(console.error);
+		fetch("/api/digest/counters")
+			.then((r) => r.json())
+			.then(setCounters)
 			.catch(console.error);
 	}, []);
 
@@ -181,6 +197,37 @@ export function Dashboard() {
 					Run Daily Digest
 				</Button>
 			</Space>
+
+			{counters && (
+				<Card style={{ marginBottom: 16, background: "#fafafa" }}>
+					<Typography.Title level={5} style={{ margin: 0 }}>
+						{counters.headline}
+					</Typography.Title>
+					<Row gutter={16} style={{ marginTop: 16 }}>
+						<Col span={6}>
+							<Statistic title="Acts (24h)" value={counters.counts.acts} />
+						</Col>
+						<Col span={6}>
+							<Statistic
+								title="Notifies in-flight"
+								value={counters.counts.notifies.inFlight}
+								valueStyle={counters.counts.notifies.inFlight > 0 ? { color: "#1677ff" } : undefined}
+							/>
+						</Col>
+						<Col span={6}>
+							<Statistic
+								title="Escalations need you"
+								value={counters.counts.escalations.needsCsm}
+								valueStyle={counters.counts.escalations.needsCsm > 0 ? { color: "#ff4d4f" } : undefined}
+								prefix={counters.counts.escalations.needsCsm > 0 ? <WarningOutlined /> : undefined}
+							/>
+						</Col>
+						<Col span={6}>
+							<Statistic title="Preps shipped" value={counters.counts.preps} />
+						</Col>
+					</Row>
+				</Card>
+			)}
 
 			{digest && (
 				<Card
