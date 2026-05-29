@@ -20,21 +20,29 @@ Open <http://localhost:5173>. You'll see the dashboard with 4 customers. The age
 ## 2a. Use your Claude Code subscription (no API key)
 
 If you already have Claude Code installed and logged in, you can run the agent
-through your existing subscription instead of using an API key.
+through your existing subscription instead of using an API key. **Custom tools
+work — the server exposes them via MCP, the Claude Code subprocess discovers
+them automatically.** This is the Paseo pattern.
 
 ```
 RUNTIME=claude-code
 ```
 
-Restart. The startup banner should show `RUNTIME claude-code`. Now chat works
-without `ANTHROPIC_API_KEY`.
+Restart. The startup banner should show `RUNTIME claude-code` and the log
+will print `MCP config: ... (N tools exposed)`.
+
+Mechanics: the server runs an HTTP MCP endpoint at `/mcp`. When we spawn
+`claude` for a chat turn, we pass `--mcp-config <temp-file>` pointing at
+that endpoint plus `--allowed-tools mcp__cerebro-claw__*` so the subprocess
+auto-approves our tools. No permission prompts, no per-token billing.
 
 Tradeoffs vs the API-key path:
 - ✅ No per-token billing — uses your Max/Pro subscription
-- ❌ Custom tools (`memory_*`, `draft_message`) are NOT exposed to the agent
-  — the agent reasons over context injected into the system prompt, not via
-  tool calls. Fine for chat-style queries, weaker for multi-step workflows.
-- ❌ Higher per-turn latency (subprocess spawn)
+- ✅ All custom tools work (csp_*, memory_*, draft_message, send_message, bash)
+- ❌ Higher per-turn latency (subprocess spawn + first-call TLS handshake;
+  ~60s for the first chat turn that hits CSP, ~10-20s afterwards)
+- ❌ The agent identifies as Claude Code rather than a CSM-flavored persona;
+  the `--append-system-prompt` injection is additive, not a full override.
 
 ## 2b. Add Anthropic API key (makes the agent think with full tools)
 

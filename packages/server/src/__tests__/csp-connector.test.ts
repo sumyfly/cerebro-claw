@@ -44,16 +44,17 @@ describe("csp-connector", () => {
 		process.env = { ...originalEnv };
 	});
 
-	it("registers all 8 tools", async () => {
+	it("registers all 9 tools", async () => {
 		const { api, tools } = makeApi();
 		await cspExtension.factory(api);
-		expect(tools.size).toBe(8);
+		expect(tools.size).toBe(9);
 		expect(tools.has("csp_list_my_accounts")).toBe(true);
 		expect(tools.has("csp_get_account")).toBe(true);
 		expect(tools.has("csp_get_health_score")).toBe(true);
 		expect(tools.has("csp_get_engagement")).toBe(true);
 		expect(tools.has("csp_get_notes")).toBe(true);
 		expect(tools.has("csp_create_note")).toBe(true);
+		expect(tools.has("csp_delete_note")).toBe(true);
 		expect(tools.has("csp_get_renewals")).toBe(true);
 		expect(tools.has("csp_get_renewal")).toBe(true);
 	});
@@ -345,6 +346,7 @@ describe("csp-connector", () => {
 		await tools.get("csp_get_engagement")!.execute({ business_id: VALID_ID });
 		await tools.get("csp_get_notes")!.execute({ business_id: VALID_ID });
 		await tools.get("csp_create_note")!.execute({ business_id: VALID_ID, content: "x" });
+		await tools.get("csp_delete_note")!.execute({ note_id: VALID_UUID });
 		await tools.get("csp_get_renewals")!.execute({ business_id: VALID_ID });
 		await tools.get("csp_get_renewal")!.execute({ renewal_id: VALID_UUID });
 
@@ -352,7 +354,33 @@ describe("csp-connector", () => {
 			const url = call[0] as string;
 			expect(url, `URL should include /api/v1: ${url}`).toContain("/api/v1/");
 		}
-		expect(fetchMock).toHaveBeenCalledTimes(8);
+		expect(fetchMock).toHaveBeenCalledTimes(9);
+	});
+
+	it("csp_delete_note POSTs to /notes/:id/delete and rejects non-UUID ids", async () => {
+		const fetchMock = vi.fn(async () => ({
+			ok: true,
+			status: 200,
+			text: async () => JSON.stringify({ success: true }),
+		}));
+		globalThis.fetch = fetchMock as never;
+
+		const { api, tools } = makeApi({ CSP_TOKEN: "tok", CSP_BASE_URL: "http://csp.test" });
+		await cspExtension.factory(api);
+
+		const ok = await tools.get("csp_delete_note")!.execute({ note_id: VALID_UUID });
+		expect(ok.success).toBe(true);
+		expect(ok.content).toContain("deleted from CSP");
+		const init = fetchMock.mock.calls[0][1] as RequestInit;
+		expect(init.method).toBe("POST");
+		expect(fetchMock.mock.calls[0][0]).toBe(`http://csp.test/api/v1/notes/${VALID_UUID}/delete`);
+
+		// Non-UUID rejected before fetch
+		fetchMock.mockClear();
+		const bad = await tools.get("csp_delete_note")!.execute({ note_id: "not-a-uuid" });
+		expect(bad.success).toBe(false);
+		expect(bad.content).toContain("Invalid note_id");
+		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
 	it("clamps non-numeric, negative, and zero limit to the default", async () => {

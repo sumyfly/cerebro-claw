@@ -16,6 +16,7 @@
  *   - csp_get_engagement
  *   - csp_get_notes
  *   - csp_create_note          (write-back)
+ *   - csp_delete_note          (write-back)
  *   - csp_get_renewals
  *   - csp_get_renewal
  */
@@ -348,6 +349,39 @@ const extension: Extension = {
 					content: `Note created in CSP. ${JSON.stringify(res.body)}`,
 					success: true,
 				};
+			},
+		});
+
+		api.registerTool({
+			name: "csp_delete_note",
+			description:
+				"Delete a note in CSP by its id. Use this only when the CSM explicitly asks to remove a note, or to clean up notes the agent itself created during testing. Once deleted the note is gone — there is no undo.",
+			parameters: {
+				type: "object",
+				properties: {
+					note_id: {
+						type: "string",
+						description: "The CSP note id (UUID, 36 chars with dashes).",
+					},
+				},
+				required: ["note_id"],
+			},
+			async execute(params) {
+				const id = String(params.note_id);
+				if (!UUID_RE.test(id)) {
+					return {
+						content: `Invalid note_id (expected UUID): ${id}`,
+						success: false,
+					};
+				}
+				const res = await call(`/notes/${id}/delete`, { method: "POST", body: "{}" });
+				if (!res.ok) {
+					return {
+						content: `CSP error ${res.status}: ${JSON.stringify(res.body)}`,
+						success: false,
+					};
+				}
+				return { content: `Note ${id} deleted from CSP.`, success: true };
 			},
 		});
 

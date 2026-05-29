@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { writeFileSync, mkdtempSync, chmodSync } from "node:fs";
+import { writeFileSync, mkdtempSync, chmodSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ClaudeCodeRuntime } from "../claude-code-runtime.js";
@@ -90,5 +90,95 @@ describe("ClaudeCodeRuntime", () => {
 		expect(result.text).toBe("orphaned response");
 		// session was never registered because we never got a session_id
 		expect(runtime.listSessions()).not.toContain("no-sess");
+	});
+
+	// --- MCP wiring: ensure --mcp-config and --allowed-tools reach the subprocess ---
+
+	/**
+	 * Builds a fake claude that writes its argv to a known file before exiting
+	 * successfully. The test can then inspect the captured args.
+	 */
+	function makeArgCapturingClaude(): { path: string; argsFile: string } {
+		const dir = mkdtempSync(join(tmpdir(), "fake-claude-args-"));
+		const argsFile = join(dir, "args.json");
+		const path = join(dir, "claude");
+		const body = `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "claude 0.0.1-fake"; exit 0; fi
+# Capture argv as JSON
+printf '['  > "${argsFile}"
+first=1
+for a in "$@"; do
+  if [ $first -eq 1 ]; then first=0; else printf ',' >> "${argsFile}"; fi
+  printf '%s' "$a" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()),end="")' >> "${argsFile}"
+done
+printf ']' >> "${argsFile}"
+printf '%s\\n' '{"type":"system","session_id":"sess-1"}'
+printf '%s\\n' '{"type":"result","result":"ok"}'
+`;
+		writeFileSync(path, body);
+		chmodSync(path, 0o755);
+		return { path, argsFile };
+	}
+
+	function makeFakeTool(name: string): import("@cerebro-claw/shared").ToolDefinition {
+		return {
+			name,
+			description: `tool ${name}`,
+			parameters: { type: "object", properties: {} },
+			async execute() {
+				return { content: "ok", success: true };
+			},
+		};
+	}
+
+	it("when mcpUrl is given, passes --mcp-config pointing at a temp file with the URL", async () => {
+		const { path, argsFile } = makeArgCapturingClaude();
+		const tools = [makeFakeTool("csp_get_account"), makeFakeTool("memory_read")];
+		const runtime = new ClaudeCodeRuntime(
+			"sonnet",
+			tools,
+			path,
+			"http://127.0.0.1:9999/mcp",
+		);
+		await runtime.prompt("hi");
+
+		const argv = JSON.parse(readFileSync(argsFile, "utf8")) as string[];
+		const idx = argv.indexOf("--mcp-config");
+		expect(idx).toBeGreaterThan(-1);
+		const configPath = argv[idx + 1];
+		expect(configPath).toBeTruthy();
+		// The config file itself should exist and contain our URL
+		const config = JSON.parse(readFileSync(configPath, "utf8"));
+		expect(config.mcpServers?.["cerebro-claw"]?.url).toBe("http://127.0.0.1:9999/mcp");
+		expect(config.mcpServers?.["cerebro-claw"]?.type).toBe("http");
+	});
+
+	it("when mcpUrl is given, passes --allowed-tools listing every registered tool", async () => {
+		const { path, argsFile } = makeArgCapturingClaude();
+		const tools = [makeFakeTool("csp_get_account"), makeFakeTool("memory_read")];
+		const runtime = new ClaudeCodeRuntime(
+			"sonnet",
+			tools,
+			path,
+			"http://127.0.0.1:9999/mcp",
+		);
+		await runtime.prompt("hi");
+
+		const argv = JSON.parse(readFileSync(argsFile, "utf8")) as string[];
+		const idx = argv.indexOf("--allowed-tools");
+		expect(idx).toBeGreaterThan(-1);
+		const list = argv[idx + 1].split(",");
+		expect(list).toContain("mcp__cerebro-claw__csp_get_account");
+		expect(list).toContain("mcp__cerebro-claw__memory_read");
+	});
+
+	it("without mcpUrl, does NOT pass --mcp-config or --allowed-tools (backward compat)", async () => {
+		const { path, argsFile } = makeArgCapturingClaude();
+		const runtime = new ClaudeCodeRuntime("sonnet", [], path);
+		await runtime.prompt("hi");
+
+		const argv = JSON.parse(readFileSync(argsFile, "utf8")) as string[];
+		expect(argv).not.toContain("--mcp-config");
+		expect(argv).not.toContain("--allowed-tools");
 	});
 });
