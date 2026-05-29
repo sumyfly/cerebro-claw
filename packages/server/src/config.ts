@@ -19,6 +19,7 @@ export interface ServerConfig {
 	larkVerificationToken: string;
 	runtime: RuntimeKind;
 	claudeBinary: string;
+	defaultCsmLarkUserId: string;
 }
 
 export function loadConfig(): ServerConfig {
@@ -42,5 +43,6 @@ export function loadConfig(): ServerConfig {
 		larkVerificationToken: process.env.LARK_VERIFICATION_TOKEN ?? "",
 		runtime: (process.env.RUNTIME === "claude-code" ? "claude-code" : "anthropic"),
 		claudeBinary: process.env.CLAUDE_BINARY ?? "claude",
+		defaultCsmLarkUserId: process.env.DEFAULT_CSM_LARK_USER_ID ?? "",
 	};
 }

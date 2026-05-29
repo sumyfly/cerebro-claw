@@ -4,13 +4,15 @@ import { randomUUID } from "node:crypto";
 export interface MessageToolsContext {
 	pendingActions: Map<string, PendingAction>;
 	sendToChannel: (channelId: string, recipientId: string, text: string) => Promise<void>;
+	/** Optional hook fired when a draft is created — lets channels surface it as a card. */
+	onActionCreated?: (action: PendingAction) => void | Promise<void>;
 }
 
 export function createMessageTools(ctx: MessageToolsContext): ToolDefinition[] {
 	const draftMessage: ToolDefinition = {
 		name: "draft_message",
 		description:
-			"Draft a message for the CSM to review before sending. The message will be held as a pending action until approved.",
+			"Draft a message for the CSM to review before sending. The message is held as a pending action — the CSM gets an approval card in their channel and can also approve from the admin UI.",
 		parameters: {
 			type: "object",
 			properties: {
@@ -45,6 +47,16 @@ export function createMessageTools(ctx: MessageToolsContext): ToolDefinition[] {
 				createdAt: new Date(),
 			};
 			ctx.pendingActions.set(action.id, action);
+
+			// Fire the post-create hook so channel extensions can render approval cards.
+			if (ctx.onActionCreated) {
+				try {
+					await ctx.onActionCreated(action);
+				} catch (err) {
+					console.error("[draft_message] onActionCreated hook failed:", err);
+				}
+			}
+
 			return {
 				content: `Draft created (ID: ${action.id}). Waiting for CSM approval.`,
 				success: true,

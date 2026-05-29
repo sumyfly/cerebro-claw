@@ -61,6 +61,8 @@ export async function createApp(): Promise<AppHandles> {
 		appId: config.larkAppId,
 		appSecret: config.larkAppSecret,
 		pendingActions,
+		store,
+		defaultCsmLarkUserId: config.defaultCsmLarkUserId || undefined,
 		onMessage: async (text, senderId, _channelId) => {
 			const sessionId = `lark:${senderId}`;
 			const message = {

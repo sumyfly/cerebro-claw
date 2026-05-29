@@ -1,4 +1,4 @@
-import type { Extension, PendingAction } from "@cerebro-claw/shared";
+import type { Extension, MemoryStore, PendingAction } from "@cerebro-claw/shared";
 import { LarkBot, buildApprovalCard } from "@cerebro-claw/channel-lark";
 
 export interface LarkExtensionOptions {
@@ -6,14 +6,20 @@ export interface LarkExtensionOptions {
 	appSecret: string;
 	pendingActions: Map<string, PendingAction>;
 	onMessage: (text: string, senderId: string, channelId: string) => Promise<string | null>;
+	/** Read access to the memory store so we can look up CSM Lark IDs per customer. */
+	store: MemoryStore;
+	/** Fallback CSM Lark user ID used when a customer has no csmLarkUserId set. */
+	defaultCsmLarkUserId?: string;
 }
 
 /**
  * Built-in Lark channel extension.
- * Registers the Lark channel adapter and wires card-action callbacks
- * to the pending-action approval flow.
  *
- * Exposes the LarkBot instance via getInstance() for the server's webhook route.
+ * Three concerns:
+ *  1. Receives inbound messages and dispatches them through the router.
+ *  2. Listens for card-button actions and resolves pending actions.
+ *  3. Subscribes to pending_action_created events from message-tools and
+ *     sends an interactive approval card to the customer's CSM.
  */
 export function createLarkExtension(opts: LarkExtensionOptions): {
 	extension: Extension;
@@ -45,6 +51,37 @@ export function createLarkExtension(opts: LarkExtensionOptions): {
 		id: "channel-lark",
 		factory: (api) => {
 			api.registerChannel(bot);
+
+			// When a draft is created anywhere, push a card to the owning CSM.
+			api.on("pending_action_created", async (payload) => {
+				const action = payload as PendingAction;
+				if (!action.draft) return;
+
+				// Resolve the CSM's Lark user ID: customer-specific first, then env fallback.
+				let larkUserId = opts.defaultCsmLarkUserId;
+				try {
+					const profile = await opts.store.getProfile(action.customerId);
+					if (profile?.csmLarkUserId) larkUserId = profile.csmLarkUserId;
+
+					const customerName = profile?.companyName ?? action.customerId;
+					if (!larkUserId) {
+						console.warn(
+							`[lark] No CSM Lark ID configured for ${customerName} — draft stays in admin queue only.`,
+						);
+						return;
+					}
+
+					const card = buildApprovalCard(
+						action.id,
+						customerName,
+						action.description,
+						action.draft.text,
+					);
+					await bot.sendCard(larkUserId, card);
+				} catch (err) {
+					console.error("[lark] Failed to send approval card:", err);
+				}
+			});
 		},
 	};
 

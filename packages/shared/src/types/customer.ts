@@ -6,6 +6,8 @@ export interface CustomerProfile {
 	contractValue?: number;
 	contacts: CustomerContact[];
 	csmOwnerId: string;
+	/** Optional: Lark open_id of the CSM owner, for sending cards/alerts directly. */
+	csmLarkUserId?: string;
 	createdAt: Date;
 	updatedAt: Date;
 }
