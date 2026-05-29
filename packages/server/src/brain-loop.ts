@@ -1,5 +1,5 @@
 import type { MemoryStore, CustomerProfile, ExtensionEvent } from "@cerebro-claw/shared";
-import { friendlyAnthropicError, type AgentRuntime } from "./agent-runtime.js";
+import { friendlyAnthropicError, type AgentBackend } from "./agent-runtime.js";
 
 export interface EventEmitter {
 	emit<T = unknown>(event: ExtensionEvent, payload: T): Promise<void>;
@@ -7,7 +7,7 @@ export interface EventEmitter {
 
 export class BrainLoop {
 	private store: MemoryStore;
-	private agent: AgentRuntime;
+	private agent: AgentBackend;
 	private intervalMs: number;
 	private timer: ReturnType<typeof setInterval> | null = null;
 	private running = false;
@@ -16,7 +16,7 @@ export class BrainLoop {
 
 	constructor(
 		store: MemoryStore,
-		agent: AgentRuntime,
+		agent: AgentBackend,
 		intervalMs: number,
 		enabled = true,
 		emitter: EventEmitter | null = null,

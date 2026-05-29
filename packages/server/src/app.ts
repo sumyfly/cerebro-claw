@@ -3,7 +3,8 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { MemoryStore, PendingAction } from "@cerebro-claw/shared";
 import { SqliteStore } from "@cerebro-claw/memory";
-import { AgentRuntime } from "./agent-runtime.js";
+import { AgentRuntime, type AgentBackend } from "./agent-runtime.js";
+import { ClaudeCodeRuntime } from "./claude-code-runtime.js";
 import { Router } from "./router.js";
 import { BrainLoop } from "./brain-loop.js";
 import { loadConfig } from "./config.js";
@@ -90,18 +91,18 @@ export async function createApp(): Promise<AppHandles> {
 		...userExtensions,
 	]);
 
-	// Agent runtime uses tools collected from extensions
-	const agent = new AgentRuntime(config.anthropicApiKey, config.model, host.getTools());
+	// Agent runtime — Anthropic SDK (default) or Claude Code subprocess
+	const agent: AgentBackend =
+		config.runtime === "claude-code"
+			? new ClaudeCodeRuntime(config.model, host.getTools(), config.claudeBinary)
+			: new AgentRuntime(config.anthropicApiKey, config.model, host.getTools());
+	console.log(`[runtime] Using ${config.runtime}`);
 
 	// Router and brain loop (brain loop emits lifecycle events through the host)
 	const router = new Router(agent);
-	const brainLoop = new BrainLoop(
-		store,
-		agent,
-		config.brainLoopIntervalMs,
-		!!config.anthropicApiKey,
-		host,
-	);
+	const brainLoopEnabled =
+		config.runtime === "claude-code" ? true : !!config.anthropicApiKey;
+	const brainLoop = new BrainLoop(store, agent, config.brainLoopIntervalMs, brainLoopEnabled, host);
 
 	// --- HTTP Routes ---
 
@@ -267,12 +268,15 @@ export async function createApp(): Promise<AppHandles> {
 			results.database = { ok: false, detail: String(err) };
 		}
 
-		// Anthropic
-		if (!config.anthropicApiKey) {
-			results.anthropic = { ok: false, detail: "ANTHROPIC_API_KEY not set" };
+		// Runtime (Anthropic SDK or Claude Code CLI)
+		if (config.runtime === "claude-code") {
+			const ping = await agent.ping();
+			results.runtime = { ok: ping.ok, detail: ping.ok ? "claude-code: CLI ready" : ping.error };
+		} else if (!config.anthropicApiKey) {
+			results.runtime = { ok: false, detail: "anthropic: ANTHROPIC_API_KEY not set" };
 		} else {
 			const ping = await agent.ping();
-			results.anthropic = { ok: ping.ok, detail: ping.ok ? "reachable" : ping.error };
+			results.runtime = { ok: ping.ok, detail: ping.ok ? "anthropic: reachable" : ping.error };
 		}
 
 		// Lark

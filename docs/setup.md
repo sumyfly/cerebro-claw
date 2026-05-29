@@ -17,7 +17,26 @@ cd ../.. && pnpm turbo dev
 
 Open <http://localhost:5173>. You'll see the dashboard with 4 customers. The agent is offline (no LLM key), but everything else works.
 
-## 2. Add Anthropic (makes the agent think)
+## 2a. Use your Claude Code subscription (no API key)
+
+If you already have Claude Code installed and logged in, you can run the agent
+through your existing subscription instead of using an API key.
+
+```
+RUNTIME=claude-code
+```
+
+Restart. The startup banner should show `RUNTIME claude-code`. Now chat works
+without `ANTHROPIC_API_KEY`.
+
+Tradeoffs vs the API-key path:
+- ✅ No per-token billing — uses your Max/Pro subscription
+- ❌ Custom tools (`memory_*`, `draft_message`) are NOT exposed to the agent
+  — the agent reasons over context injected into the system prompt, not via
+  tool calls. Fine for chat-style queries, weaker for multi-step workflows.
+- ❌ Higher per-turn latency (subprocess spawn)
+
+## 2b. Add Anthropic API key (makes the agent think with full tools)
 
 Get a key from <https://console.anthropic.com>. Add to `.env`:
 

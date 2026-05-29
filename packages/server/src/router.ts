@@ -1,5 +1,5 @@
 import type { InboundMessage } from "@cerebro-claw/shared";
-import type { AgentRuntime } from "./agent-runtime.js";
+import type { AgentBackend } from "./agent-runtime.js";
 
 export interface SessionRoute {
 	customerId: string;
@@ -8,9 +8,9 @@ export interface SessionRoute {
 
 export class Router {
 	private routes = new Map<string, SessionRoute>();
-	private agent: AgentRuntime;
+	private agent: AgentBackend;
 
-	constructor(agent: AgentRuntime) {
+	constructor(agent: AgentBackend) {
 		this.agent = agent;
 	}
 

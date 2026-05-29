@@ -2,6 +2,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_ALLOWLIST } from "@cerebro-claw/tools";
 
+export type RuntimeKind = "anthropic" | "claude-code";
+
 export interface ServerConfig {
 	port: number;
 	anthropicApiKey: string;
@@ -15,6 +17,8 @@ export interface ServerConfig {
 	extensionsDir: string;
 	adminToken: string;
 	larkVerificationToken: string;
+	runtime: RuntimeKind;
+	claudeBinary: string;
 }
 
 export function loadConfig(): ServerConfig {
@@ -36,5 +40,7 @@ export function loadConfig(): ServerConfig {
 		extensionsDir: process.env.EXTENSIONS_DIR ?? join(process.cwd(), "extensions"),
 		adminToken: process.env.ADMIN_TOKEN ?? "",
 		larkVerificationToken: process.env.LARK_VERIFICATION_TOKEN ?? "",
+		runtime: (process.env.RUNTIME === "claude-code" ? "claude-code" : "anthropic"),
+		claudeBinary: process.env.CLAUDE_BINARY ?? "claude",
 	};
 }

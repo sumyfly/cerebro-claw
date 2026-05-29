@@ -12,6 +12,18 @@ export interface AgentToolCall {
 	result: ToolResult;
 }
 
+/**
+ * Common interface implemented by AgentRuntime (Anthropic SDK) and
+ * ClaudeCodeRuntime (claude CLI subprocess). The server consumes this so
+ * the runtime can be swapped via the RUNTIME env var.
+ */
+export interface AgentBackend {
+	prompt(userMessage: string, context?: string, sessionId?: string): Promise<AgentResponse>;
+	ping(): Promise<{ ok: boolean; error?: string }>;
+	listSessions(): string[];
+	clearSession(sessionId: string): void;
+}
+
 const SYSTEM_PROMPT = `You are a CSM AI colleague — an always-on agent that helps Customer Success Managers manage their accounts.
 
 You are an agent, not an assistant. You have your own judgment about what needs doing. You proactively watch for risks, prepare briefs, draft messages, and keep customer records up to date.
