@@ -1,8 +1,124 @@
-import type { MemoryStore, CustomerProfile, ExtensionEvent } from "@cerebro-claw/shared";
+import type { MemoryStore, ExtensionEvent } from "@cerebro-claw/shared";
 import { friendlyAnthropicError, type AgentBackend } from "./agent-runtime.js";
 
 export interface EventEmitter {
 	emit<T = unknown>(event: ExtensionEvent, payload: T): Promise<void>;
+}
+
+/**
+ * What the brain loop iterates over each cycle. Implementations decide where
+ * accounts come from — the local SqliteStore (demo mode) or the live CSP
+ * backend (production mode).
+ */
+export interface AccountSource {
+	/** Short label for logs/banners. */
+	label: string;
+	/** List the accounts to evaluate this cycle. Should be cheap. */
+	list(): Promise<{ id: string; companyName: string }[]>;
+	/**
+	 * Build the per-account context fed to the agent. Local source loads
+	 * profile/state/history/instinct from SQLite. CSP source returns a
+	 * pointer prompt that tells the agent to fetch live data via csp_* tools.
+	 */
+	buildSummary(id: string, companyName: string): Promise<string>;
+}
+
+/** Local store source: full context from SQLite, used in demo mode. */
+export function createLocalAccountSource(
+	store: MemoryStore,
+): AccountSource & { _store: MemoryStore } {
+	return {
+		_store: store,
+		label: "local SQLite",
+		async list() {
+			const profiles = await store.listProfiles();
+			return profiles.map((p) => ({ id: p.id, companyName: p.companyName }));
+		},
+		async buildSummary(id, companyName) {
+			const profile = await store.getProfile(id);
+			if (!profile) return `Customer ${companyName} (${id}) — no profile data.`;
+			const state = await store.getState(id);
+			const recentHistory = await store.getHistory(id, 10);
+			const instincts = await store.getInstincts(id);
+			const ownership = profile.csmLarkUserId
+				? `CSM owner: ${profile.csmOwnerId} (Lark recipient_id=${profile.csmLarkUserId}).`
+				: `CSM owner: ${profile.csmOwnerId}. No Lark ID mapped.`;
+			return [
+				`Customer: ${profile.companyName} (${profile.id})`,
+				`Plan: ${profile.plan ?? "N/A"}, Contract: $${profile.contractValue?.toLocaleString() ?? "N/A"}/yr`,
+				ownership,
+				state
+					? `Health: ${state.health}, Open issues: ${state.openIssues}, Usage trend: ${state.usageTrend}, Last contact: ${state.lastContactDate.toISOString()}, Renewal: ${state.renewalDate?.toISOString() ?? "N/A"}`
+					: "No state data yet.",
+				recentHistory.length > 0
+					? `Recent history:\n${recentHistory.map((h) => `- [${h.type}] ${h.summary}`).join("\n")}`
+					: "No history yet.",
+				instincts.length > 0
+					? `CSM instinct notes:\n${instincts.map((i) => `- ${i.content}`).join("\n")}`
+					: "No instinct notes.",
+			].join("\n\n");
+		},
+	};
+}
+
+/**
+ * CSP source: list comes from the live backend, summary is a pointer prompt
+ * that tells the agent to fetch detail itself via csp_get_account /
+ * csp_get_health_score / csp_get_engagement. This way the agent's tool calls
+ * are the freshest possible data, and the brain loop stays thin.
+ */
+export interface CspAccountSourceOptions {
+	baseUrl: string;
+	token: string;
+	csmEmail: string;
+	timeoutMs?: number;
+	maxAccounts?: number;
+}
+
+export function createCspAccountSource(opts: CspAccountSourceOptions): AccountSource {
+	const baseUrl = opts.baseUrl.replace(/\/$/, "");
+	const timeoutMs = opts.timeoutMs ?? 10_000;
+	const max = opts.maxAccounts ?? 25;
+
+	return {
+		label: `CSP (${opts.csmEmail})`,
+		async list() {
+			const ac = new AbortController();
+			const t = setTimeout(() => ac.abort(), timeoutMs);
+			try {
+				const qs = new URLSearchParams();
+				qs.set("assignedCsmId", opts.csmEmail);
+				qs.set("limit", String(max));
+				const res = await fetch(`${baseUrl}/api/v1/accounts?${qs}`, {
+					headers: {
+						Authorization: `Bearer ${opts.token}`,
+						Accept: "application/json",
+					},
+					signal: ac.signal,
+				});
+				if (!res.ok) {
+					console.error(`[brain-loop] CSP list failed: HTTP ${res.status}`);
+					return [];
+				}
+				const body = (await res.json()) as { data?: { id: string; name: string }[] };
+				return (body.data ?? []).map((a) => ({ id: a.id, companyName: a.name }));
+			} catch (err) {
+				console.error(`[brain-loop] CSP list error: ${(err as Error).message}`);
+				return [];
+			} finally {
+				clearTimeout(t);
+			}
+		},
+		async buildSummary(id, companyName) {
+			return [
+				`You are about to review customer "${companyName}" (CSP business id: ${id}).`,
+				"",
+				"Fetch the live data yourself using csp_get_account, csp_get_health_score, and csp_get_engagement. Use csp_get_notes for recent context.",
+				"",
+				"If you spot something that needs attention — health dropping, renewal close, dormant features, missed follow-up — alert the CSM with send_message or draft a customer-facing message with draft_message. If everything looks fine, just say so and move on.",
+			].join("\n");
+		},
+	};
 }
 
 export class BrainLoop {
@@ -13,6 +129,7 @@ export class BrainLoop {
 	private running = false;
 	private enabled: boolean;
 	private emitter: EventEmitter | null;
+	private source: AccountSource;
 
 	constructor(
 		store: MemoryStore,
@@ -20,12 +137,14 @@ export class BrainLoop {
 		intervalMs: number,
 		enabled = true,
 		emitter: EventEmitter | null = null,
+		source?: AccountSource,
 	) {
 		this.store = store;
 		this.agent = agent;
 		this.intervalMs = intervalMs;
 		this.enabled = enabled;
 		this.emitter = emitter;
+		this.source = source ?? createLocalAccountSource(store);
 	}
 
 	start(): void {
@@ -48,14 +167,14 @@ export class BrainLoop {
 	}
 
 	async runDigest(): Promise<string> {
-		const profiles = await this.store.listProfiles();
-		if (profiles.length === 0) return "No customers yet.";
+		const accounts = await this.source.list();
+		if (accounts.length === 0) return "No customers yet.";
 
 		const summaries = await Promise.all(
-			profiles.map((p) => this.buildCustomerSummary(p)),
+			accounts.map((a) => this.source.buildSummary(a.id, a.companyName)),
 		);
 
-		const prompt = `You are preparing a daily briefing for the CSM. Here are all their customers:
+		const prompt = `You are preparing a daily briefing for the CSM. Here are their customers:
 
 ${summaries.join("\n\n---\n\n")}
 
@@ -77,18 +196,18 @@ Format it as a brief that a busy CSM can scan in 30 seconds. Use the tools to se
 		}
 
 		this.running = true;
-		console.log("[brain-loop] Cycle starting");
+		console.log(`[brain-loop] Cycle starting — source: ${this.source.label}`);
 		await this.emitter?.emit("brain_loop_cycle_start", { ts: Date.now() });
 
 		try {
-			const profiles = await this.store.listProfiles();
-			if (profiles.length === 0) {
-				console.log("[brain-loop] No customers yet, nothing to do");
+			const accounts = await this.source.list();
+			if (accounts.length === 0) {
+				console.log("[brain-loop] No customers from source, nothing to do");
 				return;
 			}
 
-			for (const profile of profiles) {
-				await this.evaluateCustomer(profile.id, profile.companyName);
+			for (const a of accounts) {
+				await this.evaluateCustomer(a.id, a.companyName);
 			}
 		} catch (err) {
 			console.error("[brain-loop] Cycle error:", err);
@@ -100,16 +219,13 @@ Format it as a brief that a busy CSM can scan in 30 seconds. Use the tools to se
 	}
 
 	private async evaluateCustomer(customerId: string, companyName: string): Promise<void> {
-		const profile = await this.store.getProfile(customerId);
-		if (!profile) return;
-
-		const summary = await this.buildCustomerSummary(profile);
+		const summary = await this.source.buildSummary(customerId, companyName);
 
 		const prompt = `You are reviewing customer "${companyName}". Based on the context below, decide if any action is needed right now.
 
 ${summary}
 
-If something needs attention, use the appropriate tools (send_message to alert the CSM, memory_update to update state, draft_message for customer-facing communication).
+If something needs attention, use the appropriate tools (send_message to alert the CSM, memory_update or csp_create_note to log, draft_message for customer-facing communication).
 
 If everything looks fine, just say "No action needed for ${companyName}." and move on.`;
 
@@ -123,30 +239,5 @@ If everything looks fine, just say "No action needed for ${companyName}." and mo
 		} catch (err) {
 			console.error(`[brain-loop] Error evaluating ${companyName}: ${friendlyAnthropicError(err)}`);
 		}
-	}
-
-	private async buildCustomerSummary(profile: CustomerProfile): Promise<string> {
-		const state = await this.store.getState(profile.id);
-		const recentHistory = await this.store.getHistory(profile.id, 10);
-		const instincts = await this.store.getInstincts(profile.id);
-
-		const ownership = profile.csmLarkUserId
-			? `CSM owner: ${profile.csmOwnerId} (Lark recipient_id=${profile.csmLarkUserId}). Use this Lark ID when calling send_message to alert this CSM.`
-			: `CSM owner: ${profile.csmOwnerId}. No Lark ID mapped — use draft_message for any customer-facing communication; admin UI will queue it.`;
-
-		return [
-			`Customer: ${profile.companyName} (${profile.id})`,
-			`Plan: ${profile.plan ?? "N/A"}, Contract: $${profile.contractValue?.toLocaleString() ?? "N/A"}/yr`,
-			ownership,
-			state
-				? `Health: ${state.health}, Open issues: ${state.openIssues}, Usage trend: ${state.usageTrend}, Last contact: ${state.lastContactDate.toISOString()}, Renewal: ${state.renewalDate?.toISOString() ?? "N/A"}`
-				: "No state data yet.",
-			recentHistory.length > 0
-				? `Recent history:\n${recentHistory.map((h) => `- [${h.type}] ${h.summary}`).join("\n")}`
-				: "No history yet.",
-			instincts.length > 0
-				? `CSM instinct notes:\n${instincts.map((i) => `- ${i.content}`).join("\n")}`
-				: "No instinct notes.",
-		].join("\n\n");
 	}
 }

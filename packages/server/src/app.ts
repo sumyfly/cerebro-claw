@@ -7,7 +7,7 @@ import { AgentRuntime, type AgentBackend } from "./agent-runtime.js";
 import { ClaudeCodeRuntime } from "./claude-code-runtime.js";
 import { createMcpHandler } from "./mcp-server.js";
 import { Router } from "./router.js";
-import { BrainLoop } from "./brain-loop.js";
+import { BrainLoop, createCspAccountSource } from "./brain-loop.js";
 import { loadConfig } from "./config.js";
 import { ExtensionHost } from "./extension-host.js";
 import { loadExtensionsFromDir } from "./extension-loader.js";
@@ -111,7 +111,26 @@ export async function createApp(): Promise<AppHandles> {
 	const router = new Router(agent, { store });
 	const brainLoopEnabled =
 		config.runtime === "claude-code" ? true : !!config.anthropicApiKey;
-	const brainLoop = new BrainLoop(store, agent, config.brainLoopIntervalMs, brainLoopEnabled, host);
+
+	// Pick account source: CSP (live) when CSP_TOKEN + CSP_CSM_EMAIL are configured,
+	// otherwise fall back to the local SQLite store (demo / seed mode).
+	const cspSource =
+		process.env.CSP_TOKEN && process.env.CSP_CSM_EMAIL
+			? createCspAccountSource({
+					baseUrl: process.env.CSP_BASE_URL ?? "http://localhost:5656",
+					token: process.env.CSP_TOKEN,
+					csmEmail: process.env.CSP_CSM_EMAIL,
+				})
+			: undefined;
+
+	const brainLoop = new BrainLoop(
+		store,
+		agent,
+		config.brainLoopIntervalMs,
+		brainLoopEnabled,
+		host,
+		cspSource,
+	);
 
 	// --- HTTP Routes ---
 
