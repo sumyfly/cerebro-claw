@@ -39,13 +39,18 @@ describe("csp-connector", () => {
 		process.env = { ...originalEnv };
 	});
 
-	it("registers 3 tools", async () => {
+	it("registers all 8 tools", async () => {
 		const { api, tools } = makeApi();
 		await cspExtension.factory(api);
-		expect(tools.size).toBe(3);
+		expect(tools.size).toBe(8);
 		expect(tools.has("csp_list_my_accounts")).toBe(true);
 		expect(tools.has("csp_get_account")).toBe(true);
 		expect(tools.has("csp_get_health_score")).toBe(true);
+		expect(tools.has("csp_get_engagement")).toBe(true);
+		expect(tools.has("csp_get_notes")).toBe(true);
+		expect(tools.has("csp_create_note")).toBe(true);
+		expect(tools.has("csp_get_renewals")).toBe(true);
+		expect(tools.has("csp_get_renewal")).toBe(true);
 	});
 
 	it("returns a clear error when CSP_TOKEN is not configured", async () => {
@@ -170,5 +175,147 @@ describe("csp-connector", () => {
 		const url = fetchMock.mock.calls[0][0] as string;
 		expect(url).toBe(`http://csp.test/api/accounts/${VALID_ID}`);
 		expect(url).not.toContain("//api");
+	});
+
+	// --- v2 slice: notes / renewals / engagement / write-back ---
+
+	it("csp_get_engagement hits /api/accounts/:id/engagement", async () => {
+		const fetchMock = vi.fn(async () => ({
+			ok: true,
+			status: 200,
+			text: async () => JSON.stringify({ success: true, data: { logins7d: 12 } }),
+		}));
+		globalThis.fetch = fetchMock as never;
+
+		const { api, tools } = makeApi({ CSP_TOKEN: "tok", CSP_BASE_URL: "http://csp.test" });
+		await cspExtension.factory(api);
+		const result = await tools.get("csp_get_engagement")!.execute({ business_id: VALID_ID });
+
+		expect(result.success).toBe(true);
+		expect(fetchMock.mock.calls[0][0]).toBe(`http://csp.test/api/accounts/${VALID_ID}/engagement`);
+	});
+
+	it("csp_get_notes builds the right query string", async () => {
+		const fetchMock = vi.fn(async () => ({
+			ok: true,
+			status: 200,
+			text: async () => JSON.stringify({ data: [] }),
+		}));
+		globalThis.fetch = fetchMock as never;
+
+		const { api, tools } = makeApi({ CSP_TOKEN: "tok", CSP_BASE_URL: "http://csp.test" });
+		await cspExtension.factory(api);
+		await tools.get("csp_get_notes")!.execute({
+			business_id: VALID_ID,
+			search: "renewal",
+			type: "MEETING",
+			limit: 5,
+		});
+
+		const url = fetchMock.mock.calls[0][0] as string;
+		expect(url).toContain(`businessId=${VALID_ID}`);
+		expect(url).toContain("search=renewal");
+		expect(url).toContain("type=MEETING");
+		expect(url).toContain("pageSize=5");
+		expect(url).toContain("sortBy=createdAt");
+		expect(url).toContain("sortOrder=desc");
+	});
+
+	it("csp_get_notes caps limit at 50", async () => {
+		const fetchMock = vi.fn(async () => ({ ok: true, status: 200, text: async () => "{}" }));
+		globalThis.fetch = fetchMock as never;
+
+		const { api, tools } = makeApi({ CSP_TOKEN: "tok", CSP_BASE_URL: "http://csp.test" });
+		await cspExtension.factory(api);
+		await tools.get("csp_get_notes")!.execute({ business_id: VALID_ID, limit: 999 });
+
+		const url = fetchMock.mock.calls[0][0] as string;
+		expect(url).toContain("pageSize=50");
+		expect(url).not.toContain("pageSize=999");
+	});
+
+	it("csp_create_note POSTs JSON body to /api/notes", async () => {
+		const fetchMock = vi.fn(async () => ({
+			ok: true,
+			status: 200,
+			text: async () => JSON.stringify({ success: true, data: { id: "note-1" } }),
+		}));
+		globalThis.fetch = fetchMock as never;
+
+		const { api, tools } = makeApi({ CSP_TOKEN: "tok", CSP_BASE_URL: "http://csp.test" });
+		await cspExtension.factory(api);
+		const result = await tools.get("csp_create_note")!.execute({
+			business_id: VALID_ID,
+			content: "Discussed renewal pricing with Mike — wants 10% discount.",
+			title: "Q3 renewal call",
+			type: "CALL",
+			priority: "HIGH",
+			is_private: false,
+		});
+
+		expect(result.success).toBe(true);
+		expect(result.content).toContain("Note created");
+
+		const call = fetchMock.mock.calls[0];
+		expect(call[0]).toBe("http://csp.test/api/notes");
+		const init = call[1] as RequestInit;
+		expect(init.method).toBe("POST");
+		expect((init.headers as Record<string, string>)["Content-Type"]).toBe("application/json");
+		const body = JSON.parse(init.body as string);
+		expect(body.businessId).toBe(VALID_ID);
+		expect(body.content).toContain("renewal pricing");
+		expect(body.title).toBe("Q3 renewal call");
+		expect(body.type).toBe("CALL");
+		expect(body.priority).toBe("HIGH");
+		expect(body.isPrivate).toBe(false);
+	});
+
+	it("csp_create_note requires content and validates business_id", async () => {
+		const { api, tools } = makeApi({ CSP_TOKEN: "tok" });
+		await cspExtension.factory(api);
+		const result = await tools.get("csp_create_note")!.execute({
+			business_id: "not-hex",
+			content: "anything",
+		});
+		expect(result.success).toBe(false);
+		expect(result.content).toContain("Invalid business_id");
+	});
+
+	it("csp_get_renewals hits the per-account renewals endpoint", async () => {
+		const fetchMock = vi.fn(async () => ({
+			ok: true,
+			status: 200,
+			text: async () => JSON.stringify({ data: [{ id: "r-1", status: "OPEN" }] }),
+		}));
+		globalThis.fetch = fetchMock as never;
+
+		const { api, tools } = makeApi({ CSP_TOKEN: "tok", CSP_BASE_URL: "http://csp.test" });
+		await cspExtension.factory(api);
+		await tools.get("csp_get_renewals")!.execute({ business_id: VALID_ID, status: "OPEN", limit: 5 });
+
+		const url = fetchMock.mock.calls[0][0] as string;
+		expect(url).toContain(`/api/accounts/${VALID_ID}/renewals?`);
+		expect(url).toContain("status=OPEN");
+		expect(url).toContain("pageSize=5");
+	});
+
+	it("csp_get_renewal hits /api/renewals/:id and validates the id", async () => {
+		const fetchMock = vi.fn(async () => ({
+			ok: true,
+			status: 200,
+			text: async () => JSON.stringify({ data: { id: VALID_ID, status: "OPEN" } }),
+		}));
+		globalThis.fetch = fetchMock as never;
+
+		const { api, tools } = makeApi({ CSP_TOKEN: "tok", CSP_BASE_URL: "http://csp.test" });
+		await cspExtension.factory(api);
+
+		const ok = await tools.get("csp_get_renewal")!.execute({ renewal_id: VALID_ID });
+		expect(ok.success).toBe(true);
+		expect(fetchMock.mock.calls[0][0]).toBe(`http://csp.test/api/renewals/${VALID_ID}`);
+
+		const bad = await tools.get("csp_get_renewal")!.execute({ renewal_id: "not-hex" });
+		expect(bad.success).toBe(false);
+		expect(bad.content).toContain("Invalid renewal_id");
 	});
 });

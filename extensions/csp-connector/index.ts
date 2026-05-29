@@ -13,7 +13,24 @@
  *   - csp_list_my_accounts
  *   - csp_get_account
  *   - csp_get_health_score
+ *   - csp_get_engagement
+ *   - csp_get_notes
+ *   - csp_create_note          (write-back)
+ *   - csp_get_renewals
+ *   - csp_get_renewal
  */
+
+const NOTE_TYPES = [
+	"GENERAL",
+	"MEETING",
+	"CALL",
+	"EMAIL",
+	"RENEWAL",
+	"RISK",
+	"CHURN_RISK",
+	"RETENTION_EFFORT",
+] as const;
+const PRIORITIES = ["LOW", "NORMAL", "HIGH", "URGENT"] as const;
 
 import type { Extension } from "@cerebro-claw/shared";
 
@@ -184,10 +201,185 @@ const extension: Extension = {
 						success: false,
 					};
 				}
+				return { content: JSON.stringify(res.body, null, 2), success: true };
+			},
+		});
+
+		api.registerTool({
+			name: "csp_get_engagement",
+			description:
+				"Fetch the engagement signal for an account from CSP (logins, activity, recent events). Use this to gauge real product usage — it's the authoritative usage trend, much better than guessing.",
+			parameters: {
+				type: "object",
+				properties: {
+					business_id: { type: "string", description: "The CSP account id (24-char hex businessid)." },
+				},
+				required: ["business_id"],
+			},
+			async execute(params) {
+				const id = String(params.business_id);
+				if (!/^[a-f\d]{24}$/i.test(id)) {
+					return { content: `Invalid business_id (expected 24-char hex): ${id}`, success: false };
+				}
+				const res = await cspFetch(cfg.baseUrl, cfg.token, `/api/accounts/${id}/engagement`);
+				if (!res.ok) {
+					return { content: `CSP error ${res.status}: ${JSON.stringify(res.body)}`, success: false };
+				}
+				return { content: JSON.stringify(res.body, null, 2), success: true };
+			},
+		});
+
+		api.registerTool({
+			name: "csp_get_notes",
+			description:
+				"List notes for an account from CSP. Returns the most recent notes first by default. These are the CSM's real notes — calls, meetings, decisions, observations.",
+			parameters: {
+				type: "object",
+				properties: {
+					business_id: { type: "string", description: "The CSP account id (24-char hex businessid)." },
+					search: { type: "string", description: "Optional keyword search across note content." },
+					type: {
+						type: "string",
+						description: `Optional filter by note type. One of: ${NOTE_TYPES.join(", ")}.`,
+						enum: [...NOTE_TYPES],
+					},
+					limit: { type: "number", description: "Page size (default 10, max 50)." },
+				},
+				required: ["business_id"],
+			},
+			async execute(params) {
+				const id = String(params.business_id);
+				if (!/^[a-f\d]{24}$/i.test(id)) {
+					return { content: `Invalid business_id (expected 24-char hex): ${id}`, success: false };
+				}
+				const qs = new URLSearchParams();
+				qs.set("businessId", id);
+				if (params.search) qs.set("search", String(params.search));
+				if (params.type) qs.set("type", String(params.type));
+				qs.set("pageSize", String(Math.min(Number(params.limit ?? 10), 50)));
+				qs.set("sortBy", "createdAt");
+				qs.set("sortOrder", "desc");
+
+				const res = await cspFetch(cfg.baseUrl, cfg.token, `/api/notes?${qs}`);
+				if (!res.ok) {
+					return { content: `CSP error ${res.status}: ${JSON.stringify(res.body)}`, success: false };
+				}
+				return { content: JSON.stringify(res.body, null, 2), success: true };
+			},
+		});
+
+		api.registerTool({
+			name: "csp_create_note",
+			description:
+				"Create a note on a CSP account — this writes back to the platform so the CSM and team can see it. Use this when the CSM tells you to log something ('add a note that...'), when you finalize a brief worth keeping, or when you observe something that should be visible to the team. For private agent observations the CSM doesn't need to see logged, prefer memory_instinct instead.",
+			parameters: {
+				type: "object",
+				properties: {
+					business_id: { type: "string", description: "The CSP account id (24-char hex businessid)." },
+					content: { type: "string", description: "The note body (required). Use Markdown if helpful." },
+					title: { type: "string", description: "Optional short title for the note." },
+					type: {
+						type: "string",
+						description: `Note type. Defaults to GENERAL.`,
+						enum: [...NOTE_TYPES],
+					},
+					priority: {
+						type: "string",
+						description: `Note priority. Defaults to NORMAL.`,
+						enum: [...PRIORITIES],
+					},
+					is_private: {
+						type: "boolean",
+						description: "If true, the note is only visible to the author. Defaults to false.",
+					},
+					renewal_id: { type: "string", description: "Optional renewal this note relates to." },
+				},
+				required: ["business_id", "content"],
+			},
+			async execute(params) {
+				const id = String(params.business_id);
+				if (!/^[a-f\d]{24}$/i.test(id)) {
+					return { content: `Invalid business_id (expected 24-char hex): ${id}`, success: false };
+				}
+				const body: Record<string, unknown> = {
+					businessId: id,
+					content: String(params.content),
+				};
+				if (params.title) body.title = String(params.title);
+				if (params.type) body.type = String(params.type);
+				if (params.priority) body.priority = String(params.priority);
+				if (params.is_private !== undefined) body.isPrivate = Boolean(params.is_private);
+				if (params.renewal_id) body.renewalId = String(params.renewal_id);
+
+				const res = await cspFetch(cfg.baseUrl, cfg.token, "/api/notes", {
+					method: "POST",
+					body: JSON.stringify(body),
+				});
+				if (!res.ok) {
+					return { content: `CSP error ${res.status}: ${JSON.stringify(res.body)}`, success: false };
+				}
 				return {
-					content: JSON.stringify(res.body, null, 2),
+					content: `Note created in CSP. ${JSON.stringify(res.body)}`,
 					success: true,
 				};
+			},
+		});
+
+		api.registerTool({
+			name: "csp_get_renewals",
+			description:
+				"List renewals for an account from CSP. Returns renewal records with date, status, owner, ARR. Use this to understand what renewals are coming up for a specific account.",
+			parameters: {
+				type: "object",
+				properties: {
+					business_id: { type: "string", description: "The CSP account id (24-char hex businessid)." },
+					status: { type: "string", description: "Optional filter by renewal status." },
+					limit: { type: "number", description: "Page size (default 10, max 50)." },
+				},
+				required: ["business_id"],
+			},
+			async execute(params) {
+				const id = String(params.business_id);
+				if (!/^[a-f\d]{24}$/i.test(id)) {
+					return { content: `Invalid business_id (expected 24-char hex): ${id}`, success: false };
+				}
+				const qs = new URLSearchParams();
+				if (params.status) qs.set("status", String(params.status));
+				qs.set("pageSize", String(Math.min(Number(params.limit ?? 10), 50)));
+
+				const res = await cspFetch(
+					cfg.baseUrl,
+					cfg.token,
+					`/api/accounts/${id}/renewals?${qs}`,
+				);
+				if (!res.ok) {
+					return { content: `CSP error ${res.status}: ${JSON.stringify(res.body)}`, success: false };
+				}
+				return { content: JSON.stringify(res.body, null, 2), success: true };
+			},
+		});
+
+		api.registerTool({
+			name: "csp_get_renewal",
+			description:
+				"Fetch a single renewal record by its ID. Returns full detail including status history, playbook progress, owner, ARR.",
+			parameters: {
+				type: "object",
+				properties: {
+					renewal_id: { type: "string", description: "The CSP renewal id (24-char hex)." },
+				},
+				required: ["renewal_id"],
+			},
+			async execute(params) {
+				const id = String(params.renewal_id);
+				if (!/^[a-f\d]{24}$/i.test(id)) {
+					return { content: `Invalid renewal_id (expected 24-char hex): ${id}`, success: false };
+				}
+				const res = await cspFetch(cfg.baseUrl, cfg.token, `/api/renewals/${id}`);
+				if (!res.ok) {
+					return { content: `CSP error ${res.status}: ${JSON.stringify(res.body)}`, success: false };
+				}
+				return { content: JSON.stringify(res.body, null, 2), success: true };
 			},
 		});
 	},
