@@ -2,46 +2,103 @@
 
 ## One Sentence
 
-**It's the colleague who does all the homework so you can show up and be the human.**
+**An agent that handles the long tail of a CSM's portfolio so the CSM only works the accounts that matter.**
 
 ---
 
-## What Problem Are We Solving?
+## The Problem
 
-A CSM's day looks like this:
+Andrew Lee is a CSM at StorehubPay with 1,327 assigned accounts. He can personally manage about 100 well. The other ~1,200 get whatever attention is left, which is roughly none.
 
-- 30% actually talking to customers
-- 70% **work about the work** — updating CRM fields, writing follow-up emails, preparing for calls by digging through Lark threads and support tickets, chasing internal teams for answers, building QBR decks nobody reads
-
-The AI colleague takes the 70% off their plate. Not by replacing the CSM — by doing the boring parts so the human can focus on the relationship.
+CSP shows him what's happening. Nothing does anything about it.
 
 ---
 
-## Core
+## The Goal
 
-It knows the customer. It acts on that knowledge. That's it.
+Every CSM gets a partner that handles the 1,300 accounts they can't personally know.
 
-Everything else is a channel, a tool, or a feature — and can be added later.
+The agent absorbs the routine work end-to-end so the CSM's inbox has **two things**, not 1,327. The agent's daily output to the CSM in Lark looks like:
 
-Three pieces that can't be dropped:
+> *Yesterday: 47 acts, 12 notifies in-flight, 2 escalations need you.*
 
-1. **Customer memory** — the agent must know each customer's history, status, and context. Without this, it's just a generic chatbot.
-2. **A brain loop** — it must periodically think: "what needs doing?" Without this, it's an assistant, not an agent.
-3. **One channel in, one channel out** — Lark. The agent lives in Lark IM. That's where it talks to the CSM, that's where the CSM talks to it. One channel, not five.
+## The Bright Line: Agent, Not Assistant
 
-> A server that **remembers customers**, **thinks on a schedule**, and **talks to the CSM through one channel**.
+The agent **acts**. It does not queue.
 
-### Not core (drop for now)
+| Same input | Assistant says | This product does |
+|---|---|---|
+| Usage dropped 25% on Acme | "Alert: usage dropped" | Reaches out. Logs the call. Reports outcome. |
+| Renewal in 30 days | "Prep brief — here's a draft" | Briefed. Talking points in Lark. Reminder placed. |
+| 30 days no contact | "Acme hasn't been contacted" | Sent a touchpoint. Tracking the reply. |
+| New ticket | "Customer has a question" | Answered it. Looped CSM in only if needed. |
 
-| Feature | Why it can wait |
+The CSM is in the loop for **judgment calls**, not for routine work.
+
+## Action Policy (the core IP)
+
+Per-action risk model. The agent picks the band per action based on reversibility, ARR, time pressure, and CSM-learned overrides.
+
+| Band | What goes here | What the agent does |
+|---|---|---|
+| **Act** | Reversible, low-stakes, well-understood | Just do it. Log what was done. CSM sees a summary. |
+| **Notify-then-act** | Customer-facing, routine, medium-stakes | Tell the CSM what's about to happen. Send unless paused in a short window. |
+| **Escalate** | Irreversible, high-stakes, ambiguous | Don't send. Brief the CSM with full context and a recommended decision. |
+| **Prep** | Artifact for a CSM-owned conversation | Ship a finished v1 (brief, deck, talking points). |
+
+| Action class | Default band |
 |---|---|
-| Multi-channel (Lark + email + WhatsApp) | One channel is enough to prove the value |
-| CRM auto-updating | Nice but not the core job |
-| Customer-facing responses | Risky, needs trust. CSM-facing first. |
-| Monday morning briefs | A feature of the brain loop, not the core |
-| Renewal tracking | A use case, not infrastructure |
-| Subagent spawning | Over-engineering for v1 |
-| Sandboxing, crash recovery | Production concerns, not product concerns |
+| CSP note, instinct memory, internal log | Act |
+| Internal Lark ping to CSM | Act |
+| Routine touchpoint to healthy customer | Notify-then-act (4h pause) |
+| Renewal nudge (>30d out) | Notify-then-act (4h pause) |
+| Feature-adoption nudge | Notify-then-act (4h pause) |
+| Re-engagement attempt to silent customer | Notify-then-act (24h pause) |
+| Discount, contract change, churn save | Escalate |
+| Pre-call brief, QBR deck | Prep |
+
+Policies override per-customer and per-CSM. "Sarah is sensitive about Acme — escalate everything for that account" gets stored and the agent reads it.
+
+## Work Inventory
+
+~33 distinct CSM work types Cerebro Claw can take on. See `docs/work-inventory.md` for the full list. High level:
+
+- **12 Act items** — detection, logging, internal pings, digest
+- **8 Notify-then-act items** — routine outbound (currently blocked: see below)
+- **8 Escalate items** — high-stakes briefing
+- **5 Prep items** — pre-call brief, renewal brief, QBR deck, weekly status, handoff brief
+
+## What Blocks the Agent Today
+
+| Capability gap | Blocks |
+|---|---|
+| **No customer-facing send tool** (email/IM to the customer themselves) | All 8 Notify-then-act items. The agent today can only ping the CSM in Lark or write a CSP note — it can't actually reach out to the customer. |
+| **No calendar tool** | Pre-call timing, follow-up scheduling |
+| **No CSP write APIs for activity/task/CTA** | Closing CSM activities in CSP, marking work done |
+
+Until the send tool exists, "Notify-then-act" is theoretical. That's the next real build — everything else is policy and prompting.
+
+## Success Criteria
+
+- Actively-managed portfolio per CSM: **100 → 250+** accounts
+- Time on portfolio admin: **−60%**
+- Long-tail customer touch frequency: **0 → monthly**
+- Daily escalations to the CSM: **≤ 5**, clearable in **15 min**
+
+## Explicitly Out of Scope
+
+| Not building | Why |
+|---|---|
+| A CSM dashboard replacing CSP | CSP is the source of truth; we act on it, not replace it |
+| A customer-facing chatbot | Customers don't interact with Cerebro Claw directly |
+| A draft-everything-for-approval queue | That's an assistant; we're not building one |
+| Replacing the CSM on high-stakes decisions | Escalate band exists precisely so we don't |
+
+## ⚠️ Why "draft for approval" is the bug, not the feature
+
+A draft-then-approval flow looks safe but it makes the agent indistinguishable from a dashboard with extra steps. The CSM still has to triage every item. The 1,327-vs-100 ratio doesn't improve. If we keep that pattern, we've built a fancier CSP, not an agent.
+
+The action policy above is what separates an agent from an assistant. Keep it sharp.
 
 ---
 
@@ -83,129 +140,76 @@ This is the most valuable layer. No CRM has it. The CSM teaches it to the agent 
 
 ## Brain Loop
 
-The agent wakes up on a schedule. Every cycle, it does three things:
+The agent wakes up on a schedule. Every cycle, for each account in the CSM's portfolio:
 
-**Step 1 — Scan.** Look at every customer and check: did anything change since last time?
-- New ticket opened?
-- Usage data shifted?
-- Lark message came in?
-- A date is approaching (renewal in 30 days, no contact in 2 weeks)?
+**Step 1 — Pull state.** Health score, engagement, renewals, recent notes — straight from CSP. The CSM's instinct notes from the agent's local memory. What the agent itself observed last cycle.
 
-**Step 2 — Judge.** For each change, decide: does this need action?
-- Usage dropped 5% → probably noise, skip
-- Usage dropped 40% → something is wrong, flag it
-- Renewal in 60 days → not yet
-- Renewal in 14 days and no prep started → urgent
+**Step 2 — Classify.** Pick the action band: Act, Notify-then-act, Escalate, or Prep. The classifier weights reversibility, ARR, time pressure, and per-customer overrides. A 20% usage drop on a healthy account is Act-band ("log it, watch next cycle"). The same drop on a customer flagged "evaluating competitor" is Escalate.
 
-This is where the LLM earns its keep. It's not just threshold rules — it weighs the customer's history, the CSM's instinct notes, the severity. A 20% usage drop for a healthy customer might be a holiday. The same drop for a customer "evaluating a competitor" is a red alert.
+**Step 3 — Execute.** Do the work. Reversible actions go through immediately. Customer-facing actions enter the notify-then-act window. High-stakes actions wait in escalation.
 
-**Step 3 — Act or Alert.** Two options:
-- **Act:** do something low-risk autonomously (update health score, log a note, draft a message for CSM to review)
-- **Alert:** message the CSM in Lark with context and a recommendation ("Acme usage dropped 30%. Given they're evaluating alternatives, I'd suggest a check-in. Draft ready — want me to send?")
+**Step 4 — Report.** Brain-loop output is **outcomes**, not requests: *47 acts, 12 notifies in-flight, 2 escalations.* Daily digest to the CSM in Lark.
 
-The agent never contacts the customer directly without CSM approval. That's the trust boundary.
-
-> Scan for changes → judge what matters → act on the safe stuff, alert the human on the rest.
+> Pull state → classify into bands → execute on Act and Notify-then-act → brief on Escalate → report outcomes, not requests.
 
 ---
 
-## Agent or Assistant?
+## Chat Surface
 
-**Agent by default, assistant when asked.**
+The CSM can also @ the agent in Lark to ask questions ("what's going on with Globex?"). The agent answers from the same data + tools it uses autonomously. This is the **chat surface** — same agent, different entry point.
 
-| | Assistant | Agent |
-|---|---|---|
-| Who starts? | You ask, it responds | It watches, thinks, acts on its own |
-| Metaphor | Siri — waits for your command | A real colleague — has their own work |
-| Initiative | Zero | Has judgment about when to act |
-
-This is an **agent** — it has its own agenda, its own rhythm, its own sense of what needs doing. But when you tap it on the shoulder, it drops everything and helps like an assistant.
-
-The agent loop is the engine. The assistant interface is the steering wheel.
+Chat is not the primary mode. The agent's job is to do work on its own schedule. Chat is a window into what it knows and what it's doing.
 
 ---
 
 ## What Does It Look Like?
 
-**It doesn't have its own app.** It lives where you already work.
+**It doesn't have its own app.** It lives in Lark.
 
-- In **Lark**, it's a team member. You @ it. It @ you.
-- In **email**, it sends and drafts from its own address (or yours, with approval).
-- In **CRM**, it's the one who actually keeps records up to date.
-- In the **customer's eyes**, it's either invisible (doing work behind the scenes) or a helpful first responder ("Let me check that for you, I'll loop in Sarah if needed").
+- **In Lark:** daily digest (3 numbers), notify-then-act announcements, escalation briefs, and a chat surface
+- **In CSP:** the agent writes notes, closes activities, updates state
+- **In the customer's eyes:** sometimes the source of an email or message; sometimes invisible while it works behind the scenes
 
 It's not a chatbot the customer talks to. It's a colleague the CSM works with.
 
 ---
 
-## How Do You Use It?
+## Day in the Life
 
-### 1. You ask it to do things (assistant mode)
+### Without Cerebro Claw
 
-> "Prepare me for the Acme call tomorrow"
+Andrew, 8:30am:
+1. Opens CSP, tries to remember where he left off
+2. Skims his 1,327 accounts list, knows he can't get to most of them
+3. Has a call at 9:30 — spends 30 minutes prepping by hand
+4. Writes the follow-up afterwards from scratch
+5. Notices Globex hasn't replied to him in a week, feels guilty
+6. Chases engineering on a feature request from 3 weeks ago
+7. Picks the 5-10 accounts he'll actually touch today
+8. The other 1,317 wait
 
-It pulls their recent tickets, usage trends, last meeting notes, renewal date, and sends you a brief in Lark 30 minutes before the call.
+### With Cerebro Claw
 
-> "Draft a follow-up from today's call with Acme"
+Andrew, 8:30am — Lark:
+> **Cerebro Claw:** Good morning. Yesterday: 47 acts, 12 in-flight, 2 escalations need you.
+>
+> **Escalations:**
+> 1. *Meridian renewal — health dropped to critical, decision in 5 days. Briefed in thread.*
+> 2. *Acme requesting discount. Drafted three responses — your pick.*
 
-It drafts the email, you review, one click to send.
+Andrew clears the 2 escalations in 12 minutes. The other 1,325 accounts were handled. The 47 acts and 12 notifies are in the log if he wants to scan them; he doesn't have to.
 
-> "Why is Globex health score dropping?"
-
-It checks usage data, open tickets, NPS responses, and gives you a summary with its hypothesis.
-
-### 2. It does things on its own (agent mode)
-
-- **Monday morning:** "Here's your week — 3 renewals coming up, 2 accounts with dropping usage, 1 escalation from Friday you haven't responded to."
-- **After a support ticket closes:** It logs the resolution in the CRM and updates the health score.
-- **When usage drops:** It notices before you do. "Acme's API calls dropped 40% this week. Want me to reach out or just flag it?"
-- **Before renewal:** It starts building the renewal brief 30 days out.
-
-### 3. It handles the first touch with customers
-
-- It answers immediately if it knows the answer.
-- It buys you time if it doesn't: "Let me check with the team and get back to you today."
-- It escalates to you when it senses emotion, complexity, or risk.
+He spends the rest of the day on **the relationships that matter**.
 
 ---
 
-## Why Does It Work?
+## Why It Works
 
-### 1. Context accumulates
+1. **Context accumulates.** The agent reads CSP for live state, holds the CSM's instinct notes locally, and remembers its own past observations. Over months it builds an account-specific picture no human could carry across 1,327 accounts.
 
-The agent **remembers everything** about the customer relationship. Over months, it builds a picture no human could hold in their head across 30+ accounts. When you ask "what's going on with Acme," it doesn't search — it *knows*.
+2. **Embedded, not bolted on.** It lives in Lark — where the CSM already works. The CSM doesn't go to it. It comes to them.
 
-### 2. It's embedded, not bolted on
-
-It lives in Lark and email — the places you already spend your day. You don't go to it. It comes to you.
-
-### 3. The human stays in the loop where it matters
-
-It handles the **mechanical** parts (data gathering, drafting, CRM updates) and surfaces the **judgment** parts to you (unhappy customer, expansion ready, renewal at risk). The CSM becomes the strategist. The agent becomes the executor.
-
----
-
-## What Does a Day Look Like?
-
-### Without the AI colleague
-
-1. 8:30 — Open CRM, try to remember where you left off
-2. 9:00 — Spend 30 min prepping for call by searching Lark, Zendesk, dashboards
-3. 9:30 — Call
-4. 10:00 — 20 min writing follow-up, updating CRM
-5. 10:30 — Discover a missed reply from last week
-6. 11:00 — Chase engineering on a 3-week-old feature request
-7. ... always behind
-
-### With the AI colleague
-
-1. 8:30 — Open Lark. Agent posted: "Your day: call at 9:30 (brief ready), Globex needs a reply (draft ready), 2 renewals this week"
-2. 8:35 — Review brief, tweak one point
-3. 9:30 — Call (prepared, confident)
-4. 10:00 — Approve follow-up draft. CRM already updated.
-5. 10:05 — Approve Globex reply. Agent caught the missed one yesterday.
-6. 10:10 — Agent already got a timeline from engineering. Forward to customer.
-7. 10:15 — Ahead of the day. Time for strategic work.
+3. **It acts.** Not "surfaces information for the CSM to act on." Acts. That's the bright line that separates this from every other "AI for CSMs" product.
 
 ---
 

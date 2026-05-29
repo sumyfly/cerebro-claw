@@ -1,8 +1,37 @@
 # Cerebro Claw
 
-A CSM AI colleague — an always-on server agent that remembers customers, thinks on a schedule, talks to CSMs through Lark, and reads/writes the Customer Success Platform (CSP) backend. Agent by default, assistant when asked.
+**An agent that handles the long tail of a CSM's portfolio so the CSM only works the accounts that matter.**
 
-See `docs/csm-ai-colleague-product-vision.md` for the product vision and `docs/setup.md` for getting it running.
+The CSM (e.g. Andrew Lee with 1,327 accounts at StorehubPay) cannot personally know every account. The agent absorbs the routine work end-to-end. The CSM's daily input from the agent is three numbers and the escalations only they can decide:
+
+> *Yesterday: 47 acts, 12 notifies in-flight, 2 escalations need you.*
+
+## The bright line
+
+This is an **agent**, not an assistant.
+
+- **Agent:** sees a problem → does something about it → reports the outcome
+- **Assistant:** sees a problem → queues a draft → waits for human to approve
+
+Every design decision is judged against this. If a feature reduces the work to "the human reviews a queue," it's the wrong direction. Approval is the **exception**, used only for the Escalate band (irreversible, high-stakes, ambiguous).
+
+## Action policy (the core IP)
+
+The agent classifies every action into one of four bands:
+
+| Band | Behavior |
+|---|---|
+| **Act** | Just do it. Log what was done. CSM sees a summary. (CSP notes, instinct memory, internal pings, detection, prep artifacts.) |
+| **Notify-then-act** | Tell the CSM what's about to happen. Send unless paused in a short window. (Routine customer touches, renewal nudges.) |
+| **Escalate** | Don't send. Brief the CSM with full context and a recommended decision. (Discount, churn save, contract change.) |
+| **Prep** | Ship a finished v1 the CSM uses to drive a CSM-owned conversation. (Pre-call brief, QBR deck, renewal brief.) |
+
+## Source docs
+
+- **Goal + action policy:** `docs/csm-ai-colleague-product-vision.md` (read this first)
+- **Work inventory (33 CSM work types classified):** `docs/work-inventory.md`
+- **Setup:** `docs/setup.md`
+- **UI verification workflow:** `docs/ui-verification.md`
 
 ## Tech Stack
 
