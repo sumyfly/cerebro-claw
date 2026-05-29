@@ -101,7 +101,7 @@ export async function createApp(): Promise<AppHandles> {
 	console.log(`[runtime] Using ${config.runtime}`);
 
 	// Router and brain loop (brain loop emits lifecycle events through the host)
-	const router = new Router(agent);
+	const router = new Router(agent, { store });
 	const brainLoopEnabled =
 		config.runtime === "claude-code" ? true : !!config.anthropicApiKey;
 	const brainLoop = new BrainLoop(store, agent, config.brainLoopIntervalMs, brainLoopEnabled, host);

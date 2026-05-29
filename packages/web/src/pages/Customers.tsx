@@ -11,6 +11,7 @@ interface CustomerDetail {
 		contractValue?: number;
 		contacts: { name: string; role: string; email?: string; isDecisionMaker: boolean }[];
 		csmOwnerId: string;
+		csmLarkUserId?: string;
 	};
 	state: {
 		health: string;
@@ -107,7 +108,8 @@ export function Customers() {
 			plan: values.plan,
 			contractValue: values.contractValue ? Number(values.contractValue) : undefined,
 			contacts: [],
-			csmOwnerId: "default-csm",
+			csmOwnerId: values.csmOwnerId || "default-csm",
+			csmLarkUserId: values.csmLarkUserId || undefined,
 		};
 		await fetch("/api/customers", {
 			method: "POST",
@@ -193,6 +195,18 @@ export function Customers() {
 										{selected.state?.renewalDate
 											? new Date(selected.state.renewalDate).toLocaleDateString()
 											: "-"}
+									</Descriptions.Item>
+									<Descriptions.Item label="CSM" span={2}>
+										<Typography.Text strong>{selected.profile.csmOwnerId}</Typography.Text>
+										{selected.profile.csmLarkUserId ? (
+											<Typography.Text type="secondary" style={{ marginLeft: 8 }}>
+												(Lark: {selected.profile.csmLarkUserId.slice(0, 16)}…)
+											</Typography.Text>
+										) : (
+											<Typography.Text type="warning" style={{ marginLeft: 8 }}>
+												— no Lark ID set; alerts won't reach this CSM in Lark
+											</Typography.Text>
+										)}
 									</Descriptions.Item>
 									<Descriptions.Item label="Contacts" span={2}>
 										{selected.profile.contacts.length > 0
@@ -334,6 +348,16 @@ export function Customers() {
 					</Form.Item>
 					<Form.Item name="contractValue" label="Contract Value ($/yr)">
 						<Input type="number" placeholder="e.g. 50000" />
+					</Form.Item>
+					<Form.Item name="csmOwnerId" label="CSM Owner">
+						<Input placeholder="e.g. sarah" />
+					</Form.Item>
+					<Form.Item
+						name="csmLarkUserId"
+						label="CSM Lark User ID"
+						tooltip="Optional. Lark open_id for the CSM. Without this, alerts and approval cards won't reach this customer's owner in Lark."
+					>
+						<Input placeholder="e.g. ou_abcd1234…" />
 					</Form.Item>
 				</Form>
 			</Modal>

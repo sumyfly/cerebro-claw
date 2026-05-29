@@ -130,9 +130,14 @@ If everything looks fine, just say "No action needed for ${companyName}." and mo
 		const recentHistory = await this.store.getHistory(profile.id, 10);
 		const instincts = await this.store.getInstincts(profile.id);
 
+		const ownership = profile.csmLarkUserId
+			? `CSM owner: ${profile.csmOwnerId} (Lark recipient_id=${profile.csmLarkUserId}). Use this Lark ID when calling send_message to alert this CSM.`
+			: `CSM owner: ${profile.csmOwnerId}. No Lark ID mapped — use draft_message for any customer-facing communication; admin UI will queue it.`;
+
 		return [
 			`Customer: ${profile.companyName} (${profile.id})`,
 			`Plan: ${profile.plan ?? "N/A"}, Contract: $${profile.contractValue?.toLocaleString() ?? "N/A"}/yr`,
+			ownership,
 			state
 				? `Health: ${state.health}, Open issues: ${state.openIssues}, Usage trend: ${state.usageTrend}, Last contact: ${state.lastContactDate.toISOString()}, Renewal: ${state.renewalDate?.toISOString() ?? "N/A"}`
 				: "No state data yet.",
