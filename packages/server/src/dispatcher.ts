@@ -72,9 +72,7 @@ export class NotifyThenActDispatcher {
 				else if (outcome === "failed") failed += 1;
 			}
 			if (dispatched + failed > 0) {
-				console.log(
-					`[dispatcher] Tick: ${dispatched} executed, ${failed} failed`,
-				);
+				console.log(`[dispatcher] Tick: ${dispatched} executed, ${failed} failed`);
 			}
 		} catch (err) {
 			console.error("[dispatcher] Tick error:", err);

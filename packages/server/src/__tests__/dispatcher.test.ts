@@ -1,12 +1,12 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
 import { InMemoryActionLedger, StubCustomerChannel } from "@cerebro-claw/memory";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NotifyThenActDispatcher } from "../dispatcher.js";
 
+import type { ActionLedger, CustomerChannel } from "@cerebro-claw/shared";
 // InMemoryActionLedger lives in @cerebro-claw/memory, StubCustomerChannel in
 // @cerebro-claw/tools. Vitest hoists imports but the test file is a unit so
 // we resolve the right packages here explicitly.
 import { StubCustomerChannel as Stub } from "@cerebro-claw/tools";
-import type { ActionLedger, CustomerChannel } from "@cerebro-claw/shared";
 
 describe("NotifyThenActDispatcher", () => {
 	let ledger: ActionLedger;

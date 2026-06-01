@@ -54,10 +54,16 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 		parameters: {
 			type: "object",
 			properties: {
-				customer_id: { type: "string", description: "Customer this action relates to (CSP business id)" },
+				customer_id: {
+					type: "string",
+					description: "Customer this action relates to (CSP business id)",
+				},
 				customer_name: { type: "string", description: "Customer name for the digest line" },
 				summary: { type: "string", description: "One-line description of what you just did" },
-				reason: { type: "string", description: "Why this action was warranted (signal + judgment)" },
+				reason: {
+					type: "string",
+					description: "Why this action was warranted (signal + judgment)",
+				},
 			},
 			required: ["customer_id", "summary", "reason"],
 		},
@@ -106,7 +112,8 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 				},
 				pause_minutes: {
 					type: "number",
-					description: "Minutes the CSM has to cancel before the send dispatches (default 240, max 1440)",
+					description:
+						"Minutes the CSM has to cancel before the send dispatches (default 240, max 1440)",
 				},
 				csm_recipient_id: {
 					type: "string",
@@ -120,7 +127,10 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 			const rawPause = params.pause_minutes as number | undefined;
 			const pauseMin = Math.min(
 				1440,
-				Math.max(1, Number.isFinite(rawPause) && rawPause! > 0 ? (rawPause as number) : defaultPauseMinutes),
+				Math.max(
+					1,
+					Number.isFinite(rawPause) && rawPause! > 0 ? (rawPause as number) : defaultPauseMinutes,
+				),
 			);
 			const created = now();
 			const executeAt = new Date(created.getTime() + pauseMin * 60_000);
@@ -255,11 +265,15 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 		parameters: {
 			type: "object",
 			properties: {
-				customer_id: { type: "string", description: "Customer (CSP business id), or 'portfolio' for cross-customer briefs" },
+				customer_id: {
+					type: "string",
+					description: "Customer (CSP business id), or 'portfolio' for cross-customer briefs",
+				},
 				customer_name: { type: "string", description: "Customer name (or 'Portfolio')" },
 				artifact_type: {
 					type: "string",
-					description: "What you prepared (pre-call brief, renewal brief, QBR deck, weekly status, handoff brief)",
+					description:
+						"What you prepared (pre-call brief, renewal brief, QBR deck, weekly status, handoff brief)",
 				},
 				body: { type: "string", description: "The finished artifact, formatted for the channel" },
 				csm_recipient_id: {
@@ -373,7 +387,10 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 				return { content: `Action ${id} is not an escalation.`, success: false };
 			}
 			if (existing.status !== "needs-csm") {
-				return { content: `Escalation #${id.slice(0, 8)} is already ${existing.status}.`, success: false };
+				return {
+					content: `Escalation #${id.slice(0, 8)} is already ${existing.status}.`,
+					success: false,
+				};
 			}
 			const updated = await ctx.ledger.update(id, {
 				status: "resolved",

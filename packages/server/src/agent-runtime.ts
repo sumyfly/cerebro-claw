@@ -75,10 +75,7 @@ export class AgentRuntime {
 		}));
 
 		const history = sessionId ? this.getOrCreateSession(sessionId) : [];
-		const messages: Anthropic.MessageParam[] = [
-			...history,
-			{ role: "user", content: userMessage },
-		];
+		const messages: Anthropic.MessageParam[] = [...history, { role: "user", content: userMessage }];
 
 		const toolCalls: AgentToolCall[] = [];
 		let responseText = "";

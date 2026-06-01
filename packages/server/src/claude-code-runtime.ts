@@ -62,12 +62,7 @@ export class ClaudeCodeRuntime {
 	private mcpConfigPath: string | null;
 	private allowedToolPatterns: string[];
 
-	constructor(
-		model: string,
-		tools: ToolDefinition[],
-		claudeBinary = "claude",
-		mcpUrl?: string,
-	) {
+	constructor(model: string, tools: ToolDefinition[], claudeBinary = "claude", mcpUrl?: string) {
 		this.model = model;
 		this.tools = tools;
 		this.claudeBinary = claudeBinary;

@@ -1,7 +1,7 @@
-import { describe, it, expect } from "vitest";
-import { writeFileSync, mkdtempSync, chmodSync, readFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { describe, expect, it } from "vitest";
 import { ClaudeCodeRuntime, buildClaudeArgs } from "../claude-code-runtime.js";
 
 describe("buildClaudeArgs", () => {
@@ -158,12 +158,7 @@ printf '%s\\n' '{"type":"result","result":"ok"}'
 	it("when mcpUrl is given, passes --mcp-config pointing at a temp file with the URL", async () => {
 		const { path, argsFile } = makeArgCapturingClaude();
 		const tools = [makeFakeTool("csp_get_account"), makeFakeTool("memory_read")];
-		const runtime = new ClaudeCodeRuntime(
-			"sonnet",
-			tools,
-			path,
-			"http://127.0.0.1:9999/mcp",
-		);
+		const runtime = new ClaudeCodeRuntime("sonnet", tools, path, "http://127.0.0.1:9999/mcp");
 		await runtime.prompt("hi");
 
 		const argv = JSON.parse(readFileSync(argsFile, "utf8")) as string[];
@@ -180,12 +175,7 @@ printf '%s\\n' '{"type":"result","result":"ok"}'
 	it("when mcpUrl is given, passes --allowed-tools listing every registered tool", async () => {
 		const { path, argsFile } = makeArgCapturingClaude();
 		const tools = [makeFakeTool("csp_get_account"), makeFakeTool("memory_read")];
-		const runtime = new ClaudeCodeRuntime(
-			"sonnet",
-			tools,
-			path,
-			"http://127.0.0.1:9999/mcp",
-		);
+		const runtime = new ClaudeCodeRuntime("sonnet", tools, path, "http://127.0.0.1:9999/mcp");
 		await runtime.prompt("hi");
 
 		const argv = JSON.parse(readFileSync(argsFile, "utf8")) as string[];

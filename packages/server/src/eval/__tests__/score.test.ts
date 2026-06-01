@@ -1,12 +1,21 @@
-import { describe, expect, it } from "vitest";
 import type { ActionLedgerEntry } from "@cerebro-claw/shared";
+import { describe, expect, it } from "vitest";
 import { scoreScenario } from "../score.js";
 import type { Scenario } from "../types.js";
 
-function entry(band: ActionLedgerEntry["band"], payload?: Record<string, unknown>): ActionLedgerEntry {
+function entry(
+	band: ActionLedgerEntry["band"],
+	payload?: Record<string, unknown>,
+): ActionLedgerEntry {
 	return {
-		id: "x", band, customerId: "c", summary: "s", reason: "r",
-		status: "done", createdAt: new Date(), payload,
+		id: "x",
+		band,
+		customerId: "c",
+		summary: "s",
+		reason: "r",
+		status: "done",
+		createdAt: new Date(),
+		payload,
 	};
 }
 
@@ -32,7 +41,10 @@ describe("scoreScenario", () => {
 	});
 
 	it("prefers escalate when multiple bands fired", () => {
-		const r = scoreScenario(base, [entry("act"), entry("escalate", { situation: "x", recommendation: "y" })]);
+		const r = scoreScenario(base, [
+			entry("act"),
+			entry("escalate", { situation: "x", recommendation: "y" }),
+		]);
 		expect(r.actualBand).toBe("escalate");
 		expect(r.pass).toBe(true);
 	});

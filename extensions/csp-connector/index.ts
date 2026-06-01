@@ -22,7 +22,7 @@
  */
 
 import type { Extension } from "@cerebro-claw/shared";
-import { HttpCspTransport, MockCspTransport, type CspTransport } from "./transport.js";
+import { type CspTransport, HttpCspTransport, MockCspTransport } from "./transport.js";
 
 const NOTE_TYPES = [
 	"GENERAL",
@@ -92,7 +92,9 @@ const extension: Extension = {
 				"[csp-connector] CSP_TOKEN not set — CSP tools registered but will return errors until configured.",
 			);
 		} else {
-			console.log(`[csp-connector] Wired to ${cfg.baseUrl} as CSM ${cfg.defaultCsmEmail || "(unspecified)"}`);
+			console.log(
+				`[csp-connector] Wired to ${cfg.baseUrl} as CSM ${cfg.defaultCsmEmail || "(unspecified)"}`,
+			);
 		}
 
 		api.registerTool({
@@ -202,7 +204,10 @@ const extension: Extension = {
 			parameters: {
 				type: "object",
 				properties: {
-					business_id: { type: "string", description: "The CSP account id (24-char hex businessid)." },
+					business_id: {
+						type: "string",
+						description: "The CSP account id (24-char hex businessid).",
+					},
 				},
 				required: ["business_id"],
 			},
@@ -213,7 +218,10 @@ const extension: Extension = {
 				}
 				const res = await transport.get(`/accounts/${id}/engagement`);
 				if (!res.ok) {
-					return { content: `CSP error ${res.status}: ${JSON.stringify(res.body)}`, success: false };
+					return {
+						content: `CSP error ${res.status}: ${JSON.stringify(res.body)}`,
+						success: false,
+					};
 				}
 				return { content: JSON.stringify(res.body, null, 2), success: true };
 			},
@@ -226,7 +234,10 @@ const extension: Extension = {
 			parameters: {
 				type: "object",
 				properties: {
-					business_id: { type: "string", description: "The CSP account id (24-char hex businessid)." },
+					business_id: {
+						type: "string",
+						description: "The CSP account id (24-char hex businessid).",
+					},
 					search: { type: "string", description: "Optional keyword search across note content." },
 					type: {
 						type: "string",
@@ -252,7 +263,10 @@ const extension: Extension = {
 
 				const res = await transport.get(`/notes?${qs}`);
 				if (!res.ok) {
-					return { content: `CSP error ${res.status}: ${JSON.stringify(res.body)}`, success: false };
+					return {
+						content: `CSP error ${res.status}: ${JSON.stringify(res.body)}`,
+						success: false,
+					};
 				}
 				return { content: JSON.stringify(res.body, null, 2), success: true };
 			},
@@ -265,8 +279,14 @@ const extension: Extension = {
 			parameters: {
 				type: "object",
 				properties: {
-					business_id: { type: "string", description: "The CSP account id (24-char hex businessid)." },
-					content: { type: "string", description: "The note body (required). Use Markdown if helpful." },
+					business_id: {
+						type: "string",
+						description: "The CSP account id (24-char hex businessid).",
+					},
+					content: {
+						type: "string",
+						description: "The note body (required). Use Markdown if helpful.",
+					},
 					title: { type: "string", description: "Optional short title for the note." },
 					type: {
 						type: "string",
@@ -303,7 +323,10 @@ const extension: Extension = {
 
 				const res = await transport.post("/notes", body);
 				if (!res.ok) {
-					return { content: `CSP error ${res.status}: ${JSON.stringify(res.body)}`, success: false };
+					return {
+						content: `CSP error ${res.status}: ${JSON.stringify(res.body)}`,
+						success: false,
+					};
 				}
 				return {
 					content: `Note created in CSP. ${JSON.stringify(res.body)}`,
@@ -352,7 +375,10 @@ const extension: Extension = {
 			parameters: {
 				type: "object",
 				properties: {
-					business_id: { type: "string", description: "The CSP account id (24-char hex businessid)." },
+					business_id: {
+						type: "string",
+						description: "The CSP account id (24-char hex businessid).",
+					},
 					status: { type: "string", description: "Optional filter by renewal status." },
 					limit: { type: "number", description: "Page size (default 10, max 50)." },
 				},
@@ -369,7 +395,10 @@ const extension: Extension = {
 
 				const res = await transport.get(`/accounts/${id}/renewals?${qs}`);
 				if (!res.ok) {
-					return { content: `CSP error ${res.status}: ${JSON.stringify(res.body)}`, success: false };
+					return {
+						content: `CSP error ${res.status}: ${JSON.stringify(res.body)}`,
+						success: false,
+					};
 				}
 				return { content: JSON.stringify(res.body, null, 2), success: true };
 			},
@@ -399,7 +428,10 @@ const extension: Extension = {
 				}
 				const res = await transport.get(`/renewals/${id}`);
 				if (!res.ok) {
-					return { content: `CSP error ${res.status}: ${JSON.stringify(res.body)}`, success: false };
+					return {
+						content: `CSP error ${res.status}: ${JSON.stringify(res.body)}`,
+						success: false,
+					};
 				}
 				return { content: JSON.stringify(res.body, null, 2), success: true };
 			},
