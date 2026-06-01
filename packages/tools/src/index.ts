@@ -5,6 +5,7 @@ export { createBashTool, DEFAULT_ALLOWLIST } from "./bash-tool.js";
 export type { BashToolOptions } from "./bash-tool.js";
 export {
 	StubCustomerChannel,
+	type StubCallRecord,
 	type StubCustomerChannelOptions,
 	type StubSendRecord,
 } from "./stub-customer-channel.js";

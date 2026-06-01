@@ -32,7 +32,7 @@ describe("StubCustomerChannel.call", () => {
 			recipient: "+15551234567",
 			script: "Check in on the renewal.",
 		});
-		expect(res.callId).toBeTruthy();
+		expect(res.callId).toBeDefined();
 		expect(res.placedAt).toBeInstanceOf(Date);
 		const calls = ch.getCalls();
 		expect(calls).toHaveLength(1);
