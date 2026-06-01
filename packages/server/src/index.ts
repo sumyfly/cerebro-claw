@@ -1,3 +1,4 @@
+import "./load-env.js"; // must be first — populates process.env before config is read
 import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { printStartupBanner, runStartupChecks } from "./startup.js";

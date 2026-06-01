@@ -8,14 +8,11 @@ From clean checkout to working agent in Lark in ~30 minutes.
 pnpm install
 pnpm turbo build
 
-# Seed 4 demo customers
-cd packages/server && pnpm seed
-
 # Start everything (server :3000, web :5173)
-cd ../.. && pnpm turbo dev
+pnpm turbo dev
 ```
 
-Open <http://localhost:5173>. You'll see the dashboard with 4 customers. The agent is offline (no LLM key), but everything else works.
+Open <http://localhost:5173>. The Customers tab reads live from CSP once `CSP_TOKEN` + `CSP_CSM_EMAIL` are set (see section 3); without them it's empty. The agent is offline until you add an LLM key (next section), but everything else works.
 
 ## 2a. Use your Claude Code subscription (no API key)
 
@@ -116,7 +113,7 @@ You should see:
 | Anthropic errors in console | `curl /api/diagnostics` to see the actual reason (invalid key, rate limit, etc.) |
 | Lark webhook not firing | Confirm the URL is publicly reachable; check event subscriptions are enabled |
 | Brain loop doesn't run | Set `ANTHROPIC_API_KEY` — the loop disables itself without it |
-| Agent doesn't know the customer | Run `pnpm seed` in `packages/server/` to load demo data |
+| Customers tab is empty | Set `CSP_TOKEN` + `CSP_CSM_EMAIL` so it reads the live CSP portfolio |
 
 ## Adding your own extensions
 
