@@ -68,7 +68,12 @@ function makeTransport(cfg: {
 	timeoutMs: number;
 }): CspTransport {
 	if (process.env.CSP_MOCK === "1") {
-		const fixtures = JSON.parse(process.env.CSP_MOCK_FIXTURES ?? "{}");
+		let fixtures: Record<string, unknown>;
+		try {
+			fixtures = JSON.parse(process.env.CSP_MOCK_FIXTURES ?? "{}");
+		} catch (err) {
+			throw new Error(`CSP_MOCK_FIXTURES is not valid JSON: ${(err as Error).message}`);
+		}
 		return new MockCspTransport(fixtures);
 	}
 	return new HttpCspTransport(cfg.baseUrl, cfg.token, cfg.timeoutMs);

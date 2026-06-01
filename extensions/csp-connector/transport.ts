@@ -104,19 +104,33 @@ export class HttpCspTransport implements CspTransport {
 	}
 }
 
-/** Mock transport — serves a fixture map keyed by exact path (query string ignored). */
+/**
+ * Mock transport — serves a fixture map keyed by the full prefixed CSP path
+ * (e.g. `/api/v1/accounts/<id>`), query string ignored. Tools call the
+ * transport with unprefixed paths (`/accounts/<id>`), so — exactly like
+ * `HttpCspTransport` — the prefix is applied here before lookup. This keeps
+ * fixtures keyed by the natural full CSP path.
+ */
 export class MockCspTransport implements CspTransport {
 	constructor(private fixtures: Record<string, unknown>) {}
 
+	private key(path: string): string {
+		const p = path.startsWith("/") ? path : `/${path}`;
+		return `${API_PREFIX}${p}`.split("?")[0];
+	}
+
 	async get(path: string): Promise<CspResponse> {
-		const key = path.split("?")[0];
+		const key = this.key(path);
 		if (key in this.fixtures) return { ok: true, status: 200, body: this.fixtures[key] };
 		return { ok: false, status: 404, body: null };
 	}
 
 	async post(path: string): Promise<CspResponse> {
-		const key = path.split("?")[0];
+		const key = this.key(path);
 		if (key in this.fixtures) return { ok: true, status: 200, body: this.fixtures[key] };
+		// A write doesn't need a pre-seeded fixture: return a generic created-id
+		// stub so the agent's write-back success path proceeds deterministically.
+		// (Reads 404 on a miss; writes succeed — an intentional asymmetry.)
 		return { ok: true, status: 200, body: { data: { id: "mock-created" } } };
 	}
 }
