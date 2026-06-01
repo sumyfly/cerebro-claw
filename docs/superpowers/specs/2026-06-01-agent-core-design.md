@@ -131,6 +131,28 @@ Implement **Phase 0 → 1 → 2** first (stub + runtime + eval) — the block th
 answers "is it smart." Then **Phase 3 → 4** (engine + hardening), each change
 measured against the harness.
 
+## Phase 3 follow-ups (surfaced by the Phase 0–2 review)
+
+Carry these into the Phase 3 (decision engine) plan — they are foundation gaps,
+not regressions:
+
+1. **Scorer is blind to ledger-free "act".** `csp_create_note` / `memory_instinct`
+   don't write to the action ledger, but the prompt tells the agent to "act" via
+   them. Any future `expect: act` scenario where the agent logs a note scores as
+   band `none` (false FAIL). Fix: either route the eval's "act" through the `act`
+   tool, or have the scorer also count those tool calls.
+2. **Wire `expect.tool` + the notify-payload heuristic.** `Scenario.expect.tool`
+   is typed but never read; the spec's notify-payload check (non-empty message +
+   recipient) isn't implemented. Close both when override enforcement lands.
+3. **Override enforcement is a band proxy only.** `scoreScenario` just checks
+   `actualBand === "escalate"`; `ScenarioOverride.forcesBand` is unused. Build the
+   real per-customer/per-CSM override gate (the Phase 3 hard gate) and score against it.
+4. **Severity collapse.** The scorer reduces a multi-entry run to the
+   highest-severity band. When Phase 3 makes the agent do several things per
+   account, score the *set* of bands instead.
+5. **`process.env.CSP_MOCK_FIXTURES` global mutation isn't restored** in the
+   harness — correct for sequential runs, would break a concurrent runner.
+
 ## Out of scope
 
 - Real customer channels (email/SMS/voice) — stubbed deliberately.
