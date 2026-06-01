@@ -29,11 +29,14 @@ export function createActionPolicyExtension(opts: ActionPolicyExtensionOptions):
 				defaultPauseMinutes: opts.defaultPauseMinutes,
 				async sendToCsm(recipientId, text) {
 					const sender = opts.host.getChannelSender();
-					if (sender) {
+					if (sender && recipientId !== "stub-csm") {
 						await sender.send(recipientId, text);
 					} else {
-						// No channel configured — at least make the action visible.
-						console.log(`[csm:${recipientId}] ${text}`);
+						// No real CSM channel or recipient — fall back to stderr so the
+						// action policy still completes. The ledger entry succeeds; the
+						// digest will surface the work even without a delivered heads-up.
+						const reason = !sender ? "no channel" : "stub-csm recipient";
+						console.log(`[csm-stub:${recipientId}] (${reason}) ${text}`);
 					}
 				},
 			});

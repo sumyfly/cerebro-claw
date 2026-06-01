@@ -38,14 +38,13 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 	const now = () => ctx.now?.() ?? new Date();
 	const defaultPauseMinutes = ctx.defaultPauseMinutes ?? 240;
 
+	// Resolve where to send the CSM heads-up / brief / artifact. When nothing is
+	// configured (no DEFAULT_CSM_LARK_USER_ID, no per-call override), fall back
+	// to a stub recipient. The wired sendToCsm callback decides what "stub"
+	// means in practice — usually logging to stderr — so the action policy
+	// degrades gracefully instead of failing the whole tool call.
 	function csmRecipient(explicit?: string): string {
-		const r = explicit ?? ctx.defaultCsmRecipientId;
-		if (!r) {
-			throw new Error(
-				"No CSM recipient set. Pass csm_recipient_id or configure DEFAULT_CSM_LARK_USER_ID.",
-			);
-		}
-		return r;
+		return explicit ?? ctx.defaultCsmRecipientId ?? "stub-csm";
 	}
 
 	const act: ToolDefinition = {
@@ -63,6 +62,7 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 			required: ["customer_id", "summary", "reason"],
 		},
 		async execute(params) {
+			const ts = now();
 			const entry = await ctx.ledger.record({
 				band: "act",
 				customerId: params.customer_id as string,
@@ -70,7 +70,8 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 				summary: params.summary as string,
 				reason: params.reason as string,
 				status: "done",
-				executedAt: now(),
+				createdAt: ts,
+				executedAt: ts,
 			});
 			return {
 				content: `Act logged (#${entry.id.slice(0, 8)}): ${entry.summary}`,
@@ -214,6 +215,7 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 				summary: `Escalation: ${customerName} — needs CSM decision`,
 				reason: params.situation as string,
 				status: "needs-csm",
+				createdAt: now(),
 				payload: {
 					situation: params.situation,
 					options: params.options,
@@ -263,6 +265,7 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 		},
 		async execute(params) {
 			const customerName = (params.customer_name as string) ?? (params.customer_id as string);
+			const ts = now();
 			const entry = await ctx.ledger.record({
 				band: "prep",
 				customerId: params.customer_id as string,
@@ -270,7 +273,8 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 				summary: `${params.artifact_type} ready: ${customerName}`,
 				reason: `Prep artifact: ${params.artifact_type}`,
 				status: "done",
-				executedAt: now(),
+				createdAt: ts,
+				executedAt: ts,
 				payload: {
 					artifactType: params.artifact_type,
 					body: params.body,

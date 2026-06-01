@@ -139,7 +139,7 @@ describe("action-policy tools", () => {
 			expect(window[0].note).toContain("Lark down");
 		});
 
-		it("throws when no CSM recipient is configured", async () => {
+		it("falls back to the stub CSM recipient when none is configured (graceful degrade)", async () => {
 			const noCsm = asMap(
 				createActionPolicyTools({
 					ledger,
@@ -148,14 +148,17 @@ describe("action-policy tools", () => {
 					now: () => fixedNow,
 				}),
 			);
-			await expect(
-				noCsm.get("notify_then_send_to_customer")!.execute({
-					customer_id: "biz-1",
-					recipient: "alice@acme.com",
-					text: "hi",
-					reason: "y",
-				}),
-			).rejects.toThrow(/No CSM recipient/);
+			const res = await noCsm.get("notify_then_send_to_customer")!.execute({
+				customer_id: "biz-1",
+				recipient: "alice@acme.com",
+				text: "hi",
+				reason: "y",
+			});
+			expect(res.success).toBe(true);
+			expect(sendToCsm).toHaveBeenCalledWith("stub-csm", expect.any(String));
+			const open = await ledger.listOpen();
+			expect(open).toHaveLength(1);
+			expect(open[0].status).toBe("in-flight");
 		});
 	});
 
