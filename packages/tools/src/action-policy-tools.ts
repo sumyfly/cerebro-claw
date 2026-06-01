@@ -95,6 +95,11 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 					description: "How to reach the customer (email, phone, contact id, etc.)",
 				},
 				text: { type: "string", description: "The message to send to the customer" },
+				channel: {
+					type: "string",
+					description: "How to reach the customer: 'message' (default) or 'call'.",
+					enum: ["message", "call"],
+				},
 				reason: {
 					type: "string",
 					description: "Why you're sending this — shown to the CSM in the heads-up",
@@ -132,6 +137,7 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 				payload: {
 					recipient: params.recipient,
 					text: params.text,
+					channel: (params.channel as string) === "call" ? "call" : "message",
 				},
 			});
 

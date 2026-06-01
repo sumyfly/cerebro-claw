@@ -143,6 +143,28 @@ describe("NotifyThenActDispatcher", () => {
 		expect(dispatched).toBe(1);
 	});
 
+	it("dispatches a call-channel entry via channel.call()", async () => {
+		const stub = new Stub();
+		await ledger.record({
+			band: "notify-then-act",
+			customerId: "c1",
+			summary: "renewal call",
+			reason: "renewal in 20 days",
+			status: "in-flight",
+			executeAt: new Date("2026-05-29T11:00:00Z"),
+			payload: { recipient: "+15551234567", message: "Hi", channel: "call" },
+		});
+		const d = new NotifyThenActDispatcher({
+			ledger,
+			customerChannel: stub,
+			now: () => now,
+		});
+		const res = await d.tick();
+		expect(res.dispatched).toBe(1);
+		expect(stub.getCalls()).toHaveLength(1);
+		expect(stub.getSent()).toHaveLength(0);
+	});
+
 	it("onDispatch hook fires for each entry", async () => {
 		await ledger.record({
 			band: "notify-then-act",
