@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { StubCustomerChannel } from "../stub-customer-channel.js";
 
 describe("StubCustomerChannel", () => {
@@ -21,5 +21,22 @@ describe("StubCustomerChannel", () => {
 		await ch.send({ customerId: "b", recipient: "x@y", text: "hi" });
 		await ch.send({ customerId: "b", recipient: "p@q", text: "hello" });
 		expect(seen).toEqual(["x@y", "p@q"]);
+	});
+});
+
+describe("StubCustomerChannel.call", () => {
+	it("records a call intent and returns an id", async () => {
+		const ch = new StubCustomerChannel();
+		const res = await ch.call({
+			customerId: "cust-1",
+			recipient: "+15551234567",
+			script: "Check in on the renewal.",
+		});
+		expect(res.callId).toBeTruthy();
+		expect(res.placedAt).toBeInstanceOf(Date);
+		const calls = ch.getCalls();
+		expect(calls).toHaveLength(1);
+		expect(calls[0].script).toBe("Check in on the renewal.");
+		expect(calls[0].recipient).toBe("+15551234567");
 	});
 });

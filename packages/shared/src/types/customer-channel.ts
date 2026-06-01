@@ -27,4 +27,15 @@ export interface CustomerChannel {
 		text: string;
 		meta?: Record<string, unknown>;
 	}): Promise<{ messageId: string; deliveredAt: Date }>;
+
+	/**
+	 * Optional: place a voice/phone call to the customer. Stubbed today.
+	 * Implementations that cannot call may omit this; callers must check.
+	 */
+	call?(input: {
+		customerId: string;
+		recipient: string;
+		script: string;
+		meta?: Record<string, unknown>;
+	}): Promise<{ callId: string; placedAt: Date }>;
 }
