@@ -9,6 +9,7 @@ import { ClaudeCodeRuntime } from "./claude-code-runtime.js";
 import { createMcpHandler } from "./mcp-server.js";
 import { Router } from "./router.js";
 import { BrainLoop, createCspAccountSource } from "./brain-loop.js";
+import { cspReaderFromEnv, listCspSummaries, getCspDetail } from "./csp-customers.js";
 import { NotifyThenActDispatcher } from "./dispatcher.js";
 import { loadConfig } from "./config.js";
 import { ExtensionHost } from "./extension-host.js";
@@ -56,6 +57,23 @@ export async function createApp(): Promise<AppHandles> {
 
 	// Action ledger — every act / notify / escalate / prep lands here
 	const ledger: ActionLedger = new SqliteActionLedger(config.dbPath);
+
+	// Customer data for the admin UI reads live from CSP when configured
+	// (source of truth for accounts/health/engagement); the local store is the
+	// fallback only when CSP isn't wired up. Agent-private history/instincts
+	// always come from the local store.
+	const cspReader = cspReaderFromEnv();
+	if (cspReader) {
+		// The CSP test backend serves an untrusted/expired TLS cert, which Node's
+		// fetch rejects. CSP_INSECURE_TLS is the opt-in escape hatch for dev/test.
+		if (/^(1|true|yes)$/i.test(process.env.CSP_INSECURE_TLS ?? "")) {
+			process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+			console.warn(
+				"[customers] CSP_INSECURE_TLS=true — TLS certificate verification is OFF process-wide. Dev/test only.",
+			);
+		}
+		console.log(`[customers] Reading live from CSP as CSM ${cspReader.csmEmail}`);
+	}
 
 	// Customer channel — stub by default. Real channels (email, SMS) drop in
 	// as extensions later by implementing CustomerChannel.
@@ -202,7 +220,14 @@ export async function createApp(): Promise<AppHandles> {
 
 	// --- API Routes (for admin web UI) ---
 
-	app.get("/api/customers", async (_req, res) => {
+	app.get("/api/customers", async (req, res) => {
+		// Live from CSP when configured. CSP_CSM has ~1.3k accounts, so cap the
+		// page (default 50, override with ?limit=, max 200).
+		if (cspReader) {
+			const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
+			res.json(await listCspSummaries(cspReader, limit));
+			return;
+		}
 		const profiles = await store.listProfiles();
 		const customers = await Promise.all(
 			profiles.map(async (p) => {
@@ -214,14 +239,28 @@ export async function createApp(): Promise<AppHandles> {
 	});
 
 	app.get("/api/customers/:id", async (req, res) => {
-		const profile = await store.getProfile(req.params.id);
+		const id = req.params.id;
+		// Agent-private data lives in the local store regardless of where the
+		// profile comes from.
+		const history = await store.getHistory(id, 50);
+		const instincts = await store.getInstincts(id);
+
+		// Prefer live CSP; fall back to the local store (e.g. a customer added
+		// via POST /api/customers, or demo mode with no CSP).
+		if (cspReader) {
+			const detail = await getCspDetail(cspReader, id);
+			if (detail) {
+				res.json({ ...detail, history, instincts });
+				return;
+			}
+		}
+
+		const profile = await store.getProfile(id);
 		if (!profile) {
 			res.status(404).json({ error: "Not found" });
 			return;
 		}
-		const state = await store.getState(req.params.id);
-		const history = await store.getHistory(req.params.id, 50);
-		const instincts = await store.getInstincts(req.params.id);
+		const state = await store.getState(id);
 		res.json({ profile, state, history, instincts });
 	});
 

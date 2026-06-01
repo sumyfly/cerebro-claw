@@ -18,10 +18,11 @@ agent-browser install   # downloads Chrome 149 for testing (~170 MB)
 ## Run the app
 
 ```bash
-rm -f ~/.cerebro-claw/data.db     # start clean
-(cd packages/server && pnpm seed) # 4 demo customers
+rm -f ~/.cerebro-claw/data.db     # start clean (agent ledger/memory only)
 pnpm turbo dev                    # server :3000, web :5173
 ```
+
+The Customers tab reads live from CSP when `CSP_TOKEN` + `CSP_CSM_EMAIL` are set.
 
 ## The verification loop
 

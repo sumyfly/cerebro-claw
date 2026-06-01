@@ -118,7 +118,7 @@ Set `RUNTIME=anthropic` (default) or `RUNTIME=claude-code`. Both use the same `h
 | `csp_get_renewals` | `GET /api/v1/accounts/:id/renewals` |
 | `csp_get_renewal` | `GET /api/v1/renewals/:id` (UUID) |
 
-Pure proxy — no local mirror of CSP data. Each call hits CSP live. Business IDs validated as 24-char hex; renewal IDs as UUID. 10s default timeout (`CSP_TIMEOUT_MS`). When `CSP_TOKEN` and `CSP_CSM_EMAIL` are set, the brain loop's account source switches to CSP automatically; otherwise it falls back to the local seed store (demo mode).
+Pure proxy — no local mirror of CSP data. Each call hits CSP live. Business IDs validated as 24-char hex; renewal IDs as UUID. 10s default timeout (`CSP_TIMEOUT_MS`). When `CSP_TOKEN` and `CSP_CSM_EMAIL` are set, the brain loop's account source switches to CSP automatically, and the admin UI's Customers tab reads live from CSP too (`csp-customers.ts`); otherwise both fall back to the local SQLite store. There is no demo seed — the local store only holds agent-private data (ledger, history, instincts).
 
 ## Commands
 
@@ -127,7 +127,6 @@ pnpm install                                # install
 pnpm turbo build                            # build all packages
 pnpm turbo dev                              # server + web in watch mode
 pnpm turbo test                             # run tests (190 across 4 packages)
-cd packages/server && pnpm seed             # seed 4 demo customers (demo mode only)
 ```
 
 ## Conventions

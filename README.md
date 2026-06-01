@@ -34,12 +34,13 @@ See [`docs/csm-ai-colleague-product-vision.md`](docs/csm-ai-colleague-product-vi
 ```bash
 pnpm install
 pnpm turbo build
-cd packages/server && pnpm seed   # 4 demo customers
-cd ../.. && pnpm turbo dev
+pnpm turbo dev
 ```
 
 - Server: <http://localhost:3000>
 - Web UI: <http://localhost:5173>
+
+The Customers tab reads live from CSP when `CSP_TOKEN` + `CSP_CSM_EMAIL` are set (see [`docs/setup.md`](docs/setup.md)).
 
 Without credentials the server runs in degraded mode (agent can't think). See [`docs/setup.md`](docs/setup.md) for adding Anthropic + Lark.
 
