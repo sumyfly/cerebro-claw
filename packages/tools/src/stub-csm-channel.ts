@@ -1,8 +1,8 @@
 import type {
 	ChannelAdapter,
 	ChannelMessageHandler,
+	InboundMessage,
 } from "@cerebro-claw/shared";
-import type { InboundMessage } from "@cerebro-claw/shared";
 
 export interface CsmInboxEntry {
 	kind: "text" | "card";
