@@ -22,6 +22,7 @@
  */
 
 import type { Extension } from "@cerebro-claw/shared";
+import { HttpCspTransport, MockCspTransport, type CspTransport } from "./transport.js";
 
 const NOTE_TYPES = [
 	"GENERAL",
@@ -36,7 +37,6 @@ const NOTE_TYPES = [
 const PRIORITIES = ["LOW", "NORMAL", "HIGH", "URGENT"] as const;
 
 const DEFAULT_BASE = "http://localhost:5656";
-const API_PREFIX = "/api/v1";
 const DEFAULT_TIMEOUT_MS = 10_000;
 const BUSINESS_ID_RE = /^[a-f\d]{24}$/i;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -56,63 +56,22 @@ function clampLimit(value: unknown, defaultValue: number, max: number): number {
 	return Math.min(n, max);
 }
 
-interface CspResponse {
-	ok: boolean;
-	status: number;
-	body: unknown;
-}
-
-async function cspFetch(
-	baseUrl: string,
-	token: string,
-	apiPath: string,
-	init: RequestInit & { timeoutMs?: number } = {},
-): Promise<CspResponse> {
-	if (!token) {
-		return {
-			ok: false,
-			status: 0,
-			body: {
-				error:
-					"CSP integration not configured (CSP_TOKEN missing). Fall back to memory_* tools.",
-			},
-		};
+/**
+ * Build the transport the tools share for this factory invocation.
+ * `CSP_MOCK=1` swaps in the offline fixture transport (fixtures parsed from
+ * `CSP_MOCK_FIXTURES` JSON, keyed by full CSP path); otherwise the live HTTP
+ * transport is used. Reads from `process.env`, matching production wiring.
+ */
+function makeTransport(cfg: {
+	baseUrl: string;
+	token: string;
+	timeoutMs: number;
+}): CspTransport {
+	if (process.env.CSP_MOCK === "1") {
+		const fixtures = JSON.parse(process.env.CSP_MOCK_FIXTURES ?? "{}");
+		return new MockCspTransport(fixtures);
 	}
-	const ac = new AbortController();
-	const timeoutMs = init.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-	const timeout = setTimeout(() => ac.abort(), timeoutMs);
-	try {
-		const path = apiPath.startsWith("/") ? apiPath : `/${apiPath}`;
-		const url = `${baseUrl}${API_PREFIX}${path}`;
-		const headers: Record<string, string> = {
-			Authorization: `Bearer ${token}`,
-			Accept: "application/json",
-		};
-		if (init.body) headers["Content-Type"] = "application/json";
-
-		const res = await fetch(url, {
-			...init,
-			signal: ac.signal,
-			headers: { ...headers, ...(init.headers as Record<string, string> | undefined) },
-		});
-		const text = await res.text();
-		let body: unknown = text;
-		try {
-			body = text ? JSON.parse(text) : null;
-		} catch {
-			// keep as text
-		}
-		return { ok: res.ok, status: res.status, body };
-	} catch (err) {
-		const e = err as Error & { name?: string };
-		const message =
-			e.name === "AbortError"
-				? `CSP request timed out after ${timeoutMs}ms`
-				: `CSP request failed: ${e.message}`;
-		return { ok: false, status: 0, body: { error: message } };
-	} finally {
-		clearTimeout(timeout);
-	}
+	return new HttpCspTransport(cfg.baseUrl, cfg.token, cfg.timeoutMs);
 }
 
 const extension: Extension = {
@@ -120,9 +79,8 @@ const extension: Extension = {
 	factory: (api) => {
 		const cfg = configFromEnv();
 
-		// Convenience wrapper so each tool doesn't have to thread cfg + timeout.
-		const call = (path: string, init: RequestInit = {}) =>
-			cspFetch(cfg.baseUrl, cfg.token, path, { ...init, timeoutMs: cfg.timeoutMs });
+		// One transport shared by every tool in this factory invocation.
+		const transport = makeTransport(cfg);
 
 		if (!cfg.token) {
 			console.warn(
@@ -154,7 +112,7 @@ const extension: Extension = {
 				if (params.search) qs.set("search", params.search as string);
 				qs.set("limit", String(clampLimit(params.limit, 20, 100)));
 
-				const res = await call(`/accounts?${qs}`);
+				const res = await transport.get(`/accounts?${qs}`);
 				if (!res.ok) {
 					return {
 						content: `CSP error ${res.status}: ${JSON.stringify(res.body)}`,
@@ -188,7 +146,7 @@ const extension: Extension = {
 				if (!BUSINESS_ID_RE.test(id)) {
 					return { content: `Invalid business_id (expected 24-char hex): ${id}`, success: false };
 				}
-				const res = await call(`/accounts/${id}`);
+				const res = await transport.get(`/accounts/${id}`);
 				if (!res.ok) {
 					return {
 						content: `CSP error ${res.status}: ${JSON.stringify(res.body)}`,
@@ -221,7 +179,7 @@ const extension: Extension = {
 				if (!BUSINESS_ID_RE.test(id)) {
 					return { content: `Invalid business_id (expected 24-char hex): ${id}`, success: false };
 				}
-				const res = await call(`/accounts/${id}/health-score`);
+				const res = await transport.get(`/accounts/${id}/health-score`);
 				if (!res.ok) {
 					return {
 						content: `CSP error ${res.status}: ${JSON.stringify(res.body)}`,
@@ -248,7 +206,7 @@ const extension: Extension = {
 				if (!BUSINESS_ID_RE.test(id)) {
 					return { content: `Invalid business_id (expected 24-char hex): ${id}`, success: false };
 				}
-				const res = await call(`/accounts/${id}/engagement`);
+				const res = await transport.get(`/accounts/${id}/engagement`);
 				if (!res.ok) {
 					return { content: `CSP error ${res.status}: ${JSON.stringify(res.body)}`, success: false };
 				}
@@ -287,7 +245,7 @@ const extension: Extension = {
 				qs.set("sortBy", "createdAt");
 				qs.set("sortOrder", "desc");
 
-				const res = await call(`/notes?${qs}`);
+				const res = await transport.get(`/notes?${qs}`);
 				if (!res.ok) {
 					return { content: `CSP error ${res.status}: ${JSON.stringify(res.body)}`, success: false };
 				}
@@ -338,10 +296,7 @@ const extension: Extension = {
 				if (params.is_private !== undefined) body.isPrivate = Boolean(params.is_private);
 				if (params.renewal_id) body.renewalId = String(params.renewal_id);
 
-				const res = await call("/notes", {
-					method: "POST",
-					body: JSON.stringify(body),
-				});
+				const res = await transport.post("/notes", body);
 				if (!res.ok) {
 					return { content: `CSP error ${res.status}: ${JSON.stringify(res.body)}`, success: false };
 				}
@@ -374,7 +329,7 @@ const extension: Extension = {
 						success: false,
 					};
 				}
-				const res = await call(`/notes/${id}/delete`, { method: "POST", body: "{}" });
+				const res = await transport.post(`/notes/${id}/delete`, {});
 				if (!res.ok) {
 					return {
 						content: `CSP error ${res.status}: ${JSON.stringify(res.body)}`,
@@ -407,7 +362,7 @@ const extension: Extension = {
 				if (params.status) qs.set("status", String(params.status));
 				qs.set("pageSize", String(clampLimit(params.limit, 10, 50)));
 
-				const res = await call(`/accounts/${id}/renewals?${qs}`);
+				const res = await transport.get(`/accounts/${id}/renewals?${qs}`);
 				if (!res.ok) {
 					return { content: `CSP error ${res.status}: ${JSON.stringify(res.body)}`, success: false };
 				}
@@ -437,7 +392,7 @@ const extension: Extension = {
 						success: false,
 					};
 				}
-				const res = await call(`/renewals/${id}`);
+				const res = await transport.get(`/renewals/${id}`);
 				if (!res.ok) {
 					return { content: `CSP error ${res.status}: ${JSON.stringify(res.body)}`, success: false };
 				}
