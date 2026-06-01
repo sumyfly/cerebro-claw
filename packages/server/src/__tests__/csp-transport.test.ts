@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { MockCspTransport } from "../transport.js";
+// The extension lives at extensions/csp-connector/ at the repo root.
+import { MockCspTransport } from "../../../../extensions/csp-connector/transport.ts";
 
 describe("MockCspTransport", () => {
 	it("serves fixture data by path", async () => {
