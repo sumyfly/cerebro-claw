@@ -27,6 +27,10 @@ export interface EvalAgentDeps {
 	csmChannel: ChannelAdapter;
 	/** CSP fixture map keyed by exact path, fed to MockCspTransport via env. */
 	cspFixtures: Record<string, unknown>;
+	/** CSM instinct notes to seed into the store (agent-private memory). */
+	instincts?: string[];
+	/** Customer/business id the seeded instincts are keyed under. */
+	customerId?: string;
 }
 
 /** What the runner needs from the agent: one-shot prompt that drives tool calls. */
@@ -58,8 +62,26 @@ export async function buildAgentForEval(deps: EvalAgentDeps): Promise<EvalAgent>
 	// Host with an in-memory store (memory tools need a store; eval keeps it
 	// throwaway — agent-private instincts/history don't survive the run).
 	const { InMemoryStore } = await import("@cerebro-claw/memory");
+	const store = new InMemoryStore();
+
+	// Seed the scenario's CSM instinct notes so the agent's memory_* tools can
+	// surface them — without this, a scenario whose correct band depends on what
+	// the CSM "told" the agent (e.g. "evaluating a competitor") can't be tested.
+	if (deps.instincts?.length && deps.customerId) {
+		let i = 0;
+		for (const content of deps.instincts) {
+			await store.addInstinct({
+				id: `eval-instinct-${i++}`,
+				customerId: deps.customerId,
+				content,
+				source: "csm",
+				createdAt: new Date(),
+			});
+		}
+	}
+
 	const host = new ExtensionHost({
-		store: new InMemoryStore(),
+		store,
 		config: { dbPath: ":memory:", model: config.model },
 	});
 

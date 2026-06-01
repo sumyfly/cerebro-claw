@@ -84,15 +84,28 @@ async function runScenario(scenario: Scenario): Promise<ScenarioResult> {
 	const csmChannel = new StubCsmChannel();
 	await csmChannel.start(async () => null);
 
+	const instincts = scenario.memory?.instincts ?? [];
 	const agent = await buildAgentForEval({
 		ledger,
 		customerChannel,
 		csmChannel,
 		cspFixtures: scenario.csp,
+		instincts,
+		customerId: businessId,
 	});
 
+	// The instincts are seeded into the store (memory_* tools can find them) and
+	// also injected as per-account context so the agent reliably sees what the
+	// CSM has told it about this account — the band call often hinges on it.
+	const context =
+		instincts.length > 0
+			? `What the CSM has told you about this account (instinct notes):\n${instincts
+					.map((i) => `- ${i}`)
+					.join("\n")}`
+			: undefined;
+
 	try {
-		await agent.prompt(reviewPrompt(businessId), undefined, `eval:${scenario.id}`);
+		await agent.prompt(reviewPrompt(businessId), context, `eval:${scenario.id}`);
 	} finally {
 		await agent.close();
 	}
