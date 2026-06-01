@@ -4,6 +4,41 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ToolDefinition } from "@cerebro-claw/shared";
 import type { AgentResponse } from "./agent-runtime.js";
+import { SYSTEM_PROMPT } from "./system-prompt.js";
+
+export interface BuildArgsInput {
+	userMessage: string;
+	model: string;
+	context?: string;
+	resumeSessionId?: string;
+	mcpConfigPath?: string | null;
+	allowedToolPatterns?: string[];
+}
+
+/**
+ * Builds the `claude` CLI argv for a single turn. Pure function so the arg
+ * construction is unit-testable without spawning the subprocess. Always injects
+ * the Cerebro SYSTEM_PROMPT via --append-system-prompt (with any per-account
+ * context appended after it).
+ */
+export function buildClaudeArgs(input: BuildArgsInput): string[] {
+	const args: string[] = ["-p", input.userMessage, "--output-format", "stream-json", "--verbose"];
+	if (input.model && !input.model.startsWith("claude-sonnet-4-")) {
+		// Pass through explicit model selection. Skip the SDK default
+		// because Claude Code picks its own default.
+		args.push("--model", input.model);
+	}
+	const systemPrompt = input.context ? `${SYSTEM_PROMPT}\n\n${input.context}` : SYSTEM_PROMPT;
+	args.push("--append-system-prompt", systemPrompt);
+	if (input.resumeSessionId) args.push("--resume", input.resumeSessionId);
+	if (input.mcpConfigPath) {
+		args.push("--mcp-config", input.mcpConfigPath);
+		if (input.allowedToolPatterns && input.allowedToolPatterns.length > 0) {
+			args.push("--allowed-tools", input.allowedToolPatterns.join(","));
+		}
+	}
+	return args;
+}
 
 /**
  * Alternative agent runtime that drives the `claude` CLI (Claude Code) as a
@@ -12,9 +47,8 @@ import type { AgentResponse } from "./agent-runtime.js";
  * Tradeoffs vs the Anthropic SDK runtime:
  *  + No API key. Uses your Max/Pro subscription.
  *  + Inherits Claude Code's built-in file/bash tools.
- *  - Custom tools (memory_*, draft_message, send_message) are NOT exposed to
- *    the agent through this runtime. We compensate by injecting relevant
- *    customer memory directly into the system prompt before each turn.
+ *  - Custom tools are exposed over the MCP endpoint (`--mcp-config`); the
+ *    Cerebro system prompt is injected via `--append-system-prompt`.
  *  - Higher per-turn latency (subprocess startup).
  *  - Requires `claude` on PATH.
  *
@@ -101,20 +135,14 @@ export class ClaudeCodeRuntime {
 	async prompt(userMessage: string, context?: string, sessionId?: string): Promise<AgentResponse> {
 		const claudeSessionId = sessionId ? this.sessions.get(sessionId) : undefined;
 
-		const args: string[] = ["-p", userMessage, "--output-format", "stream-json", "--verbose"];
-		if (this.model && !this.model.startsWith("claude-sonnet-4-")) {
-			// Pass through explicit model selection. Skip the SDK default
-			// because Claude Code picks its own default.
-			args.push("--model", this.model);
-		}
-		if (context) args.push("--append-system-prompt", context);
-		if (claudeSessionId) args.push("--resume", claudeSessionId);
-		if (this.mcpConfigPath) {
-			args.push("--mcp-config", this.mcpConfigPath);
-			if (this.allowedToolPatterns.length > 0) {
-				args.push("--allowed-tools", this.allowedToolPatterns.join(","));
-			}
-		}
+		const args = buildClaudeArgs({
+			userMessage,
+			model: this.model,
+			context,
+			resumeSessionId: claudeSessionId,
+			mcpConfigPath: this.mcpConfigPath,
+			allowedToolPatterns: this.allowedToolPatterns,
+		});
 
 		return new Promise<AgentResponse>((resolve, reject) => {
 			const child = spawn(this.claudeBinary, args);

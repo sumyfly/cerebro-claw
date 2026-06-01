@@ -2,7 +2,31 @@ import { describe, it, expect } from "vitest";
 import { writeFileSync, mkdtempSync, chmodSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ClaudeCodeRuntime } from "../claude-code-runtime.js";
+import { ClaudeCodeRuntime, buildClaudeArgs } from "../claude-code-runtime.js";
+
+describe("buildClaudeArgs", () => {
+	it("always appends the Cerebro system prompt", () => {
+		const args = buildClaudeArgs({ userMessage: "review Acme", model: "claude-opus-4-8" });
+		const i = args.indexOf("--append-system-prompt");
+		expect(i).toBeGreaterThan(-1);
+		expect(args[i + 1]).toContain("Cerebro Claw");
+	});
+
+	it("merges per-account context after the system prompt", () => {
+		const args = buildClaudeArgs({ userMessage: "x", model: "m", context: "Customer: Acme" });
+		const i = args.indexOf("--append-system-prompt");
+		expect(args[i + 1]).toContain("Cerebro Claw");
+		expect(args[i + 1]).toContain("Customer: Acme");
+	});
+
+	it("includes the user message via -p and stream-json output", () => {
+		const args = buildClaudeArgs({ userMessage: "hello", model: "m" });
+		expect(args).toContain("-p");
+		expect(args).toContain("hello");
+		expect(args).toContain("--output-format");
+		expect(args).toContain("stream-json");
+	});
+});
 
 /**
  * Drives the runtime against a fake `claude` binary so we don't depend on
