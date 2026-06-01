@@ -152,7 +152,7 @@ describe("NotifyThenActDispatcher", () => {
 			reason: "renewal in 20 days",
 			status: "in-flight",
 			executeAt: new Date("2026-05-29T11:00:00Z"),
-			payload: { recipient: "+15551234567", message: "Hi", channel: "call" },
+			payload: { recipient: "+15551234567", text: "Hi", channel: "call" },
 		});
 		const d = new NotifyThenActDispatcher({
 			ledger,

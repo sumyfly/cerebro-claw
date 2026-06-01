@@ -86,11 +86,11 @@ export class NotifyThenActDispatcher {
 
 	private async dispatchOne(entry: ActionLedgerEntry): Promise<"executed" | "failed" | "skipped"> {
 		const payload = entry.payload as
-			| { recipient?: string; text?: string; message?: string; channel?: string }
+			| { recipient?: string; text?: string; channel?: string }
 			| undefined;
-		// The customer-facing copy lives in `text` (legacy) or `message` (call
-		// entries). Accept either so both routing paths share one guard.
-		const body = payload?.text ?? payload?.message;
+		// The customer-facing copy lives in `text` — used as message body for a
+		// send and as the script for a call.
+		const body = payload?.text;
 		if (!payload?.recipient || !body) {
 			await this.ledger.update(entry.id, {
 				status: "failed",
