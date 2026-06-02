@@ -16,17 +16,17 @@
 - [x] A3. Override enforcement — HARD GATE at the action-policy tool layer:
       act/notify/prep refused + redirected when an override forces a stricter
       band; escalate always allowed. 6 tests. (5bc091b)
-- [~] A4. Change-detection — fingerprint + "no-change → no action" guidance built
-      and PROVEN in eval (no-change-dedup passes real claude). REMAINING: persist
-      per-account decision across real production cycles (store layer) so dedup
-      fires in the live loop, not just when the eval injects lastDecision.
+- [x] A4. Change-detection — fingerprint + "no-change → no action" guidance;
+      persisted per-account via getLastDecision/recordDecision (in-memory + SQLite,
+      survives reopen). CSP source reads+records it each cycle → dedup fires in the
+      live loop. Placeholder band never surfaced as a real decision. (0b87e88, 95d2175)
 
 ### B. Wire the engine into the real CSM loop over Cerebro
 - [x] B1. createCspAccountSource fetches the snapshot server-side, computes signals,
       and injects the decision-context ahead of the fetch pointer. (771ddb1)
-- [~] B2. Overrides: taught as instinct notes, parsed + enforced via the hard gate
-      in production (resolveOverrideFromStore). DONE. Decision-memory persistence
-      (last fingerprint per account) across cycles — REMAINING (ties to A4).
+- [x] B2. Overrides: taught as instinct notes, parsed + enforced via the hard gate
+      in production (resolveOverrideFromStore). Decision-memory persisted in the
+      store (in-memory + SQLite). Both done.
 
 ### C. Honest measurement (don't cheat)
 - [x] C1. Act-band recorded via the `act` tool (prompt sharpened); `expect: act`

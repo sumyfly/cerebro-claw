@@ -48,3 +48,23 @@ Notes:
   override + decision stores (B2). Until then the intelligence lives in the test
   rig, not the running agent.
 
+
+## 2026-06-02 — final state (engine in production loop + persisted decision memory)
+
+After A4/B1/B2 + honesty fix. Run on the final committed branch state.
+
+```
+[PASS] healthy-quiet: expected none, got none
+[PASS] no-change-dedup: expected none, got none
+[PASS] override-escalate-everything: expected escalate, got escalate
+[PASS] usage-drop-competitor: expected escalate, got escalate
+[PASS] usage-drop-healthy: expected act, got act
+5/5 passed
+```
+
+Status: decision engine (signals + decision-context + override hard gate +
+persisted change-detection) is wired into BOTH the eval and the production CSP
+account source. Verified across multiple real-claude runs. Honest caveats:
+live-Cerebro run needs a CSP token (unavailable) — eval uses cerebro-shaped
+fixtures + real claude; claude-code reports toolCalls:[] so scores are read from
+the action ledger (ground truth).
