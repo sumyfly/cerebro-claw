@@ -92,3 +92,26 @@ Fixture battery re-run on REAL CSP shapes (deterministic) via real claude: 5/5.
 Honest notes: health TREND isn't exposed by CSP (left null; usage trend derived
 from transactions). Live agent actions may write a CSP note to the test backend
 (product behaving as designed). claude-code toolCalls:[] → scores from ledger.
+
+## 2026-06-02 — LIVE portfolio daily digest (the actual CSM loop)
+
+`pnpm --filter @cerebro-claw/server eval:portfolio -- 6` — one agent reviews 6
+live accounts into one ledger, then the daily digest is computed from it:
+
+```
+Yesterday: 2 acts, 1 notifies in-flight, 0 escalations need you.
+  → 1975toastandcoffee: renewal nudge (notify-then-act, in-flight)
+  ✓ 1sixteen6cheras: RISK note — AT_RISK driven by merchant decline (-15% YoY)
+  ✓ 247mixedrice:    churn-risk detection — AT_RISK 48, merchant GMV -26% YoY
+```
+
+This is the product headline deliverable end-to-end on live Cerebro: agent
+classifies each account into a band, the ledger fills, the CSM gets three numbers
++ the items that need them.
+
+KNOWN LIMITATION (disclosed): the digest counts band-tool calls. The agent
+sometimes performs an Act-band action via csp_create_note directly without also
+calling the `act` tool, so the headline can UNDERCOUNT real work. Because the
+claude-code runtime reports toolCalls:[], the server can't observe those raw CSP
+writes — closing this needs MCP-layer call logging or CSP-side note counting
+(follow-up). The bands that ARE recorded are correct; the count is a floor.
