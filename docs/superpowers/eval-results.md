@@ -126,3 +126,16 @@ unit-tested. The known-limitation from the prior section is now CLOSED.
 
 Live portfolio re-run (6 accounts): the agent judged most accounts as needing no
 action this cycle (legitimate restraint) — digest reflected its real decisions.
+
+## 2026-06-02 — health trend from history (closes the 'trend ?' gap)
+
+The agent now perceives health MOVEMENT, not just level: the decision record
+persists the health score, and the next cycle derives up/down/flat. On first
+contact there's no prior so it honestly shows 'trend ?'; from cycle 2 (in
+production's persistent store + 5-min loop) the trend surfaces. Health trend is
+deliberately excluded from the change-fingerprint (it's history-derived; including
+it would never stabilise). Cross-cycle behaviour unit-proven (80->54 => down).
+
+Final tallies: memory 36, tools 47, server 176 = 259 tests; build green.
+Live no-regression: signals populate (Health 54/AT_RISK, 78/HEALTHY), decisions
+sound (notify / none per account specifics).
