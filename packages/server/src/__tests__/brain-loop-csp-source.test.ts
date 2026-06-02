@@ -105,6 +105,27 @@ describe("createCspAccountSource — engine injection", () => {
 		expect(second).toContain("No material change since last cycle");
 	});
 
+	it("derives a health trend from the prior cycle's score", async () => {
+		const store = new InMemoryStore();
+		const acct = (score: number) => ({
+			[`/api/v1/accounts/${ID}`]: { id: ID, name: "Acme" },
+			[`/api/v1/accounts/${ID}/health-score`]: { overall: { score, category: "X" } },
+			[`/api/v1/accounts/${ID}/engagement`]: [],
+		});
+
+		// Cycle 1 at health 80 — no prior, so no health trend yet; score recorded.
+		mockCsp(acct(80));
+		const first = await createCspAccountSource(opts(store)).buildSummary(ID, "Acme");
+		expect(first).toContain("Health: 80");
+		expect(await store.getLastDecision(ID)).toMatchObject({ healthScore: 80 });
+
+		// Cycle 2 at health 54 — prior was 80 → trend down surfaced to the agent.
+		mockCsp(acct(54));
+		const second = await createCspAccountSource(opts(store)).buildSummary(ID, "Acme");
+		expect(second).toContain("Health: 54");
+		expect(second).toContain("trend down");
+	});
+
 	it("degrades to the pointer prompt when CSP fetch fails", async () => {
 		vi.stubGlobal(
 			"fetch",

@@ -1,6 +1,6 @@
 import type { ExtensionEvent, MemoryStore } from "@cerebro-claw/shared";
 import { type AgentBackend, friendlyAnthropicError } from "./agent-runtime.js";
-import { cspToSnapshot } from "./engine/csp-snapshot.js";
+import { cspToSnapshot, deriveHealthTrend } from "./engine/csp-snapshot.js";
 import { renderDecisionContext } from "./engine/decision-context.js";
 import { parseOverrideBand } from "./engine/overrides.js";
 import { type AccountSnapshot, computeSignals } from "./engine/signals.js";
@@ -169,8 +169,14 @@ export function createCspAccountSource(opts: CspAccountSourceOptions): AccountSo
 				const now = (opts.now ?? (() => new Date()))();
 				// Map the REAL CSP shapes into the engine snapshot, then layer in
 				// agent-private memory (instincts, overrides, last decision).
+				const mapped = cspToSnapshot({ account, health, engagement }, now);
+				// Derive the health TREND from last cycle's score (CSP has no trend field).
+				const healthTrend = deriveHealthTrend(mapped.healthScore?.overallScore, last?.healthScore);
 				const snapshot: AccountSnapshot = {
-					...cspToSnapshot({ account, health, engagement }, now),
+					...mapped,
+					healthScore: mapped.healthScore
+						? { ...mapped.healthScore, trend: healthTrend }
+						: mapped.healthScore,
 					instincts,
 					overrides: overrideBand ? [{ rule: "stored override", forcesBand: overrideBand }] : [],
 					lastDecision: last
@@ -189,6 +195,7 @@ export function createCspAccountSource(opts: CspAccountSourceOptions): AccountSo
 						band: last?.band ?? "reviewed",
 						reason: "auto: brain-loop signal snapshot",
 						ts: now,
+						healthScore: mapped.healthScore?.overallScore,
 					});
 				}
 				const context = renderDecisionContext(signals, instincts);

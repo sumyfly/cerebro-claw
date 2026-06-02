@@ -52,9 +52,16 @@ export class SqliteStore implements MemoryStore {
 				signal_fingerprint TEXT NOT NULL,
 				band TEXT NOT NULL,
 				reason TEXT,
-				ts TEXT NOT NULL
+				ts TEXT NOT NULL,
+				health_score REAL
 			);
 		`);
+		// Migrate older dbs that predate the health_score column.
+		try {
+			this.db.exec("ALTER TABLE decisions ADD COLUMN health_score REAL");
+		} catch {
+			// Column already exists — fine.
+		}
 	}
 
 	async getProfile(customerId: string): Promise<CustomerProfile | null> {
@@ -216,6 +223,7 @@ export class SqliteStore implements MemoryStore {
 					band: string;
 					reason: string | null;
 					ts: string;
+					health_score: number | null;
 			  }
 			| undefined;
 		if (!row) return null;
@@ -225,13 +233,14 @@ export class SqliteStore implements MemoryStore {
 			band: row.band,
 			reason: row.reason ?? undefined,
 			ts: new Date(row.ts),
+			healthScore: row.health_score ?? undefined,
 		};
 	}
 
 	async recordDecision(record: DecisionRecord): Promise<void> {
 		this.db
 			.prepare(
-				"INSERT OR REPLACE INTO decisions (customer_id, signal_fingerprint, band, reason, ts) VALUES (?, ?, ?, ?, ?)",
+				"INSERT OR REPLACE INTO decisions (customer_id, signal_fingerprint, band, reason, ts, health_score) VALUES (?, ?, ?, ?, ?, ?)",
 			)
 			.run(
 				record.customerId,
@@ -239,6 +248,7 @@ export class SqliteStore implements MemoryStore {
 				record.band,
 				record.reason ?? null,
 				record.ts.toISOString(),
+				record.healthScore ?? null,
 			);
 	}
 

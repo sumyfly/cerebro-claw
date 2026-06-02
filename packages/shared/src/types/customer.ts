@@ -62,4 +62,6 @@ export interface DecisionRecord {
 	band: string;
 	reason?: string;
 	ts: Date;
+	/** Health score at this decision — lets the next cycle derive a health trend. */
+	healthScore?: number;
 }

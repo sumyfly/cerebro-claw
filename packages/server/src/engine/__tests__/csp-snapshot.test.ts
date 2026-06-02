@@ -68,3 +68,19 @@ describe("deriveUsageTrend", () => {
 		expect(deriveUsageTrend(undefined)).toBeUndefined();
 	});
 });
+
+import { deriveHealthTrend } from "../csp-snapshot.js";
+describe("deriveHealthTrend", () => {
+	it("down when health fell beyond the noise band", () => {
+		expect(deriveHealthTrend(54, 70)).toBe("down");
+	});
+	it("up when health rose beyond the noise band", () => {
+		expect(deriveHealthTrend(80, 60)).toBe("up");
+	});
+	it("flat within ±2", () => {
+		expect(deriveHealthTrend(61, 60)).toBe("flat");
+	});
+	it("undefined without a prior", () => {
+		expect(deriveHealthTrend(60, undefined)).toBeUndefined();
+	});
+});

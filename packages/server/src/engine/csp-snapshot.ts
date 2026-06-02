@@ -52,6 +52,20 @@ export function deriveUsageTrend(
 	return "flat";
 }
 
+/**
+ * Health trend from the prior cycle's score (CSP exposes no trend directly).
+ * ±2 points is noise; beyond that is real movement a CSM should weigh.
+ */
+export function deriveHealthTrend(
+	current: number | null | undefined,
+	prior: number | null | undefined,
+): "up" | "down" | "flat" | undefined {
+	if (typeof current !== "number" || typeof prior !== "number") return undefined;
+	if (current > prior + 2) return "up";
+	if (current < prior - 2) return "down";
+	return "flat";
+}
+
 export function cspToSnapshot(raw: CspRaw, now: Date): AccountSnapshot {
 	const account = raw.account ?? {};
 	const bm = (account.businessMetrics ?? {}) as Record<string, unknown>;

@@ -102,11 +102,13 @@ export function computeSignals(snapshot: AccountSnapshot): DecisionSignals {
 	const hasOverride = (snapshot.overrides ?? []).length > 0;
 	const overrideForcesBand = override?.forcesBand ?? null;
 
-	// Fingerprint uses BUCKETED / categorical signals only, so day-to-day noise
-	// (a login here, one point of health) doesn't look like a real change.
+	// Fingerprint uses BUCKETED / categorical CURRENT-state signals only, so
+	// day-to-day noise (a login here, one point of health) doesn't look like a
+	// real change. Health TREND is deliberately excluded: it's derived from the
+	// stored prior, so including it would make the fingerprint history-dependent
+	// and never stabilise (unknown → flat on the second identical look).
 	const signalFingerprint = [
 		`grade:${health.grade ?? "?"}`,
-		`htrend:${health.trend ?? "?"}`,
 		`utrend:${eng.trend ?? "?"}`,
 		`renewal:${renewalBucket(daysToRenewal)}`,
 		`override:${overrideForcesBand ?? (hasOverride ? "yes" : "no")}`,
