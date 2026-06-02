@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
 import { InMemoryActionLedger } from "@cerebro-claw/memory";
+import type { ToolDefinition } from "@cerebro-claw/shared";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createActionPolicyTools } from "../action-policy-tools.js";
 import { StubCustomerChannel } from "../stub-customer-channel.js";
-import type { ToolDefinition } from "@cerebro-claw/shared";
 
 function asMap(tools: ToolDefinition[]): Map<string, ToolDefinition> {
 	return new Map(tools.map((t) => [t.name, t]));
@@ -216,7 +216,7 @@ describe("action-policy tools", () => {
 				text: "x",
 				reason: "y",
 			});
-			const id = (created.details!.actionId as string);
+			const id = created.details!.actionId as string;
 			const res = await tools.get("cancel_pending_action")!.execute({
 				action_id: id,
 				reason: "Customer self-served",
@@ -268,6 +268,92 @@ describe("action-policy tools", () => {
 			const entry = await ledger.get(id);
 			expect(entry?.status).toBe("resolved");
 			expect(entry?.note).toBe("CSM approved 10% discount");
+		});
+	});
+
+	describe("override hard gate", () => {
+		function toolsWithOverride(forcedFor: Record<string, string>) {
+			return asMap(
+				createActionPolicyTools({
+					ledger,
+					customerChannel: channel,
+					sendToCsm,
+					defaultCsmRecipientId: "csm:andrew",
+					now: () => fixedNow,
+					resolveOverride: (customerId) =>
+						forcedFor[customerId] ? { forcesBand: forcedFor[customerId] } : null,
+				}),
+			);
+		}
+
+		it("blocks act on an account whose override forces escalate", async () => {
+			const t = toolsWithOverride({ acme: "escalate" });
+			const res = await t.get("act")!.execute({
+				customer_id: "acme",
+				summary: "logged a note",
+				reason: "usage dip",
+			});
+			expect(res.success).toBe(false);
+			expect(res.content).toContain('requires the "escalate" band');
+			expect(res.details?.requiredBand).toBe("escalate");
+			// Nothing was written to the ledger.
+			expect((await ledger.listByWindow(new Date(0), fixedNow)).length).toBe(0);
+		});
+
+		it("blocks notify-then-act on a forced-escalate account", async () => {
+			const t = toolsWithOverride({ acme: "escalate" });
+			const res = await t.get("notify_then_send_to_customer")!.execute({
+				customer_id: "acme",
+				recipient: "a@acme.com",
+				text: "hi",
+				reason: "routine touch",
+			});
+			expect(res.success).toBe(false);
+			expect(res.details?.requiredBand).toBe("escalate");
+			expect(channel.getSent()).toHaveLength(0);
+		});
+
+		it("blocks prep on a forced-escalate account", async () => {
+			const t = toolsWithOverride({ acme: "escalate" });
+			const res = await t.get("prep")!.execute({
+				customer_id: "acme",
+				artifact_type: "renewal brief",
+				body: "...",
+			});
+			expect(res.success).toBe(false);
+			expect(res.details?.requiredBand).toBe("escalate");
+		});
+
+		it("still ALLOWS escalate on a forced-escalate account", async () => {
+			const t = toolsWithOverride({ acme: "escalate" });
+			const res = await t.get("escalate")!.execute({
+				customer_id: "acme",
+				situation: "churn risk",
+				options: "1) save 2) let go",
+				recommendation: "save",
+			});
+			expect(res.success).toBe(true);
+		});
+
+		it("does NOT block a customer with no override", async () => {
+			const t = toolsWithOverride({ acme: "escalate" });
+			const res = await t.get("act")!.execute({
+				customer_id: "globex",
+				summary: "logged a note",
+				reason: "fyi",
+			});
+			expect(res.success).toBe(true);
+		});
+
+		it("does not block when the override forces a band <= the attempted band", async () => {
+			// An override forcing 'act' should not block an 'act'.
+			const t = toolsWithOverride({ acme: "act" });
+			const res = await t.get("act")!.execute({
+				customer_id: "acme",
+				summary: "note",
+				reason: "fyi",
+			});
+			expect(res.success).toBe(true);
 		});
 	});
 });

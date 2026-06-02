@@ -17,6 +17,10 @@ import type {
  * - defaultPauseMinutes: pause window for notify-then-act when the agent
  *   didn't pick one. 240min (4h) per work-inventory.md.
  * - now: clock — injectable for tests.
+ * - resolveOverride: per-customer/per-CSM rule lookup. If it returns a band,
+ *   that band is the ENFORCED minimum for the customer — act/notify/prep are
+ *   refused and the agent is told to use the required band. This is the hard
+ *   gate that makes overrides real, not just prompt guidance.
  */
 export interface ActionPolicyToolsContext {
 	ledger: ActionLedger;
@@ -25,7 +29,18 @@ export interface ActionPolicyToolsContext {
 	defaultCsmRecipientId?: string;
 	defaultPauseMinutes?: number;
 	now?: () => Date;
+	resolveOverride?: (
+		customerId: string,
+	) => Promise<{ forcesBand?: string } | null> | { forcesBand?: string } | null;
 }
+
+/** Band severity, low → high. An override forcing a higher band blocks lower ones. */
+const BAND_SEVERITY: Record<string, number> = {
+	act: 0,
+	prep: 1,
+	"notify-then-act": 2,
+	escalate: 3,
+};
 
 const BAND_LABEL: Record<string, string> = {
 	act: "Act",
@@ -45,6 +60,24 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 	// degrades gracefully instead of failing the whole tool call.
 	function csmRecipient(explicit?: string): string {
 		return explicit ?? ctx.defaultCsmRecipientId ?? "stub-csm";
+	}
+
+	/**
+	 * Hard override gate. If the customer has an override forcing a band stricter
+	 * than `attemptedBand`, refuse the action and tell the agent to use the
+	 * required band. Returns a refusal ToolResult, or null when allowed.
+	 */
+	async function overrideBlock(customerId: string, attemptedBand: string) {
+		if (!ctx.resolveOverride) return null;
+		const override = await ctx.resolveOverride(customerId);
+		const forced = override?.forcesBand;
+		if (!forced) return null;
+		if ((BAND_SEVERITY[forced] ?? 0) <= (BAND_SEVERITY[attemptedBand] ?? 0)) return null;
+		return {
+			content: `Blocked by override: account ${customerId} requires the "${forced}" band. Do not use ${BAND_LABEL[attemptedBand] ?? attemptedBand} here — call ${forced === "escalate" ? "escalate (with situation + options + recommendation)" : `\`${forced}\``} instead.`,
+			success: false,
+			details: { blockedBy: "override", requiredBand: forced, attemptedBand },
+		};
 	}
 
 	const act: ToolDefinition = {
@@ -68,6 +101,8 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 			required: ["customer_id", "summary", "reason"],
 		},
 		async execute(params) {
+			const blocked = await overrideBlock(params.customer_id as string, "act");
+			if (blocked) return blocked;
 			const ts = now();
 			const entry = await ctx.ledger.record({
 				band: "act",
@@ -123,6 +158,8 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 			required: ["customer_id", "recipient", "text", "reason"],
 		},
 		async execute(params) {
+			const blocked = await overrideBlock(params.customer_id as string, "notify-then-act");
+			if (blocked) return blocked;
 			const customerName = (params.customer_name as string) ?? (params.customer_id as string);
 			const rawPause = params.pause_minutes as number | undefined;
 			const pauseMin = Math.min(
@@ -284,6 +321,8 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 			required: ["customer_id", "artifact_type", "body"],
 		},
 		async execute(params) {
+			const blocked = await overrideBlock(params.customer_id as string, "prep");
+			if (blocked) return blocked;
 			const customerName = (params.customer_name as string) ?? (params.customer_id as string);
 			const ts = now();
 			const entry = await ctx.ledger.record({
