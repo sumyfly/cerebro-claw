@@ -139,3 +139,19 @@ it would never stabilise). Cross-cycle behaviour unit-proven (80->54 => down).
 Final tallies: memory 36, tools 47, server 176 = 259 tests; build green.
 Live no-regression: signals populate (Health 54/AT_RISK, 78/HEALTHY), decisions
 sound (notify / none per account specifics).
+
+## 2026-06-02 — post-review-fix re-verification
+
+After applying the code-review fixes (buildSummary side-effects → onEvaluated;
+live override gate wired to the store; prep exempt from the override gate;
+shared review prompt; observer note-is-act). Re-ran the fixture battery on real
+claude — it surfaced a real prompt sensitivity (healthy-quiet ↔ usage-drop-healthy
+trade off on "is a dip worth logging"), fixed with a principled distinction
+(no change → none; adverse signal → act), NOT by weakening any scenario:
+
+```
+[PASS] healthy-quiet: none      [PASS] no-change-dedup: none
+[PASS] override-escalate-everything: escalate
+[PASS] usage-drop-competitor: escalate   [PASS] usage-drop-healthy: act
+5/5 passed
+```
