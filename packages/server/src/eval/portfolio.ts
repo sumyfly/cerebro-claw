@@ -60,6 +60,7 @@ async function main(): Promise<void> {
 		for (const acct of accounts) {
 			const context = await source.buildSummary(acct.id, acct.companyName);
 			await agent.prompt(reviewUserMessage(acct.companyName, acct.id), context, `pf:${acct.id}`);
+			await source.onEvaluated?.(acct.id);
 			process.stdout.write(`  · reviewed ${acct.companyName}\n`);
 		}
 	} finally {

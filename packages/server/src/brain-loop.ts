@@ -20,11 +20,19 @@ export interface AccountSource {
 	/** List the accounts to evaluate this cycle. Should be cheap. */
 	list(): Promise<{ id: string; companyName: string }[]>;
 	/**
-	 * Build the per-account context fed to the agent. Local source loads
-	 * profile/state/history/instinct from SQLite. CSP source returns a
-	 * pointer prompt that tells the agent to fetch live data via csp_* tools.
+	 * Build the per-account context fed to the agent. MUST be side-effect free —
+	 * it is called both per-cycle (evaluateCustomer) and on-demand (runDigest), so
+	 * it may run several times per account. Persisting state here would corrupt
+	 * change-detection; record that in `onEvaluated` instead.
 	 */
 	buildSummary(id: string, companyName: string): Promise<string>;
+	/**
+	 * Called once, after the agent has actually reviewed an account in a cycle.
+	 * The CSP source persists this cycle's signal fingerprint here (not in
+	 * buildSummary) so cross-cycle change-detection sees exactly one snapshot per
+	 * cycle. Optional — the local source has nothing to persist.
+	 */
+	onEvaluated?(id: string): Promise<void>;
 }
 
 /** Local store source: full context from SQLite, used in demo mode. */
@@ -109,6 +117,10 @@ export function createCspAccountSource(opts: CspAccountSourceOptions): AccountSo
 		}
 	}
 
+	// Cache the fingerprint computed in buildSummary so onEvaluated can persist
+	// it exactly once per cycle (buildSummary itself must stay side-effect free).
+	const pendingSnapshot = new Map<string, { signalFingerprint: string; healthScore?: number }>();
+
 	return {
 		label: `CSP (${opts.csmEmail})`,
 		async list() {
@@ -184,20 +196,13 @@ export function createCspAccountSource(opts: CspAccountSourceOptions): AccountSo
 						: undefined,
 				};
 				const signals = computeSignals(snapshot);
-				// Persist this cycle's signal fingerprint so next cycle can detect
-				// whether anything material changed (cross-cycle dedup). Band carries
-				// the last known decision; it's informational — the fingerprint is
-				// what drives change detection.
-				if (opts.store) {
-					await opts.store.recordDecision({
-						customerId: id,
-						signalFingerprint: signals.signalFingerprint,
-						band: last?.band ?? "reviewed",
-						reason: "auto: brain-loop signal snapshot",
-						ts: now,
-						healthScore: mapped.healthScore?.overallScore,
-					});
-				}
+				// Stash this cycle's fingerprint; onEvaluated persists it ONCE after
+				// the agent reviews. Recording here would corrupt change-detection,
+				// since buildSummary also runs from runDigest / repeat calls.
+				pendingSnapshot.set(id, {
+					signalFingerprint: signals.signalFingerprint,
+					healthScore: mapped.healthScore?.overallScore,
+				});
 				const context = renderDecisionContext(signals, instincts);
 				return `${context}\n\n${pointer}`;
 			} catch (err) {
@@ -206,6 +211,23 @@ export function createCspAccountSource(opts: CspAccountSourceOptions): AccountSo
 				);
 				return pointer;
 			}
+		},
+		async onEvaluated(id) {
+			const snap = pendingSnapshot.get(id);
+			if (!snap || !opts.store) return;
+			pendingSnapshot.delete(id);
+			const prior = await opts.store.getLastDecision(id);
+			// Record exactly one snapshot per cycle for cross-cycle change detection.
+			// Band is carried from the prior decision (informational); the fingerprint
+			// is what drives dedup. The ledger holds the band the agent actually fired.
+			await opts.store.recordDecision({
+				customerId: id,
+				signalFingerprint: snap.signalFingerprint,
+				band: prior?.band ?? "reviewed",
+				reason: "auto: brain-loop signal snapshot",
+				ts: (opts.now ?? (() => new Date()))(),
+				healthScore: snap.healthScore,
+			});
 		},
 	};
 }
@@ -332,6 +354,10 @@ If nothing needs doing, say "No action needed for ${companyName}." and move on.`
 			}
 		} catch (err) {
 			console.error(`[brain-loop] Error evaluating ${companyName}: ${friendlyAnthropicError(err)}`);
+		} finally {
+			// Persist this cycle's signal snapshot exactly once, after the review —
+			// never from buildSummary (which also runs in runDigest).
+			await this.source.onEvaluated?.(customerId);
 		}
 	}
 }

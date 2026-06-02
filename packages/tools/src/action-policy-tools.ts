@@ -321,8 +321,10 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 			required: ["customer_id", "artifact_type", "body"],
 		},
 		async execute(params) {
-			const blocked = await overrideBlock(params.customer_id as string, "prep");
-			if (blocked) return blocked;
+			// No override gate: prep produces a CSM-facing artifact (a brief/deck the
+			// CSM uses), not a customer touch or an autonomous account action — an
+			// "escalate/notify everything" override is about reaching the customer,
+			// and prepping material for the CSM only helps them own that decision.
 			const customerName = (params.customer_name as string) ?? (params.customer_id as string);
 			const ts = now();
 			const entry = await ctx.ledger.record({

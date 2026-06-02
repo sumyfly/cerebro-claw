@@ -10,6 +10,7 @@ import { createActionPolicyExtension } from "../builtin-extensions/action-policy
 import { memoryToolsExtension } from "../builtin-extensions/memory-tools-extension.js";
 import { ClaudeCodeRuntime } from "../claude-code-runtime.js";
 import { loadConfig } from "../config.js";
+import { resolveOverrideFromStore } from "../engine/overrides.js";
 import { ExtensionHost } from "../extension-host.js";
 import { loadExtensionsFromDir } from "../extension-loader.js";
 import { createMcpHandler } from "../mcp-server.js";
@@ -145,12 +146,16 @@ export async function buildAgentForEval(deps: EvalAgentDeps): Promise<EvalAgent>
 			// in the csmChannel inbox rather than the stderr fallback.
 			defaultCsmRecipientId: "eval-csm",
 			defaultPauseMinutes: config.defaultPauseMinutes,
-			// Enforce the scenario's override (if any) for this account, exactly as
-			// production would from the override store.
+			// Enforce overrides exactly as production does. Fixture scenarios pass
+			// an explicit override for deps.customerId; live/portfolio runs (no
+			// scenario customerId) resolve from the store like production, so the
+			// gate is never silently disabled on the live path.
 			resolveOverride: (customerId) => {
-				if (customerId !== deps.customerId) return null;
-				const forcing = (deps.overrides ?? []).find((o) => o.forcesBand);
-				return forcing ? { forcesBand: forcing.forcesBand } : null;
+				if (deps.customerId && customerId === deps.customerId) {
+					const forcing = (deps.overrides ?? []).find((o) => o.forcesBand);
+					if (forcing) return { forcesBand: forcing.forcesBand };
+				}
+				return resolveOverrideFromStore(store, customerId);
 			},
 		}),
 		...cspExtensions,

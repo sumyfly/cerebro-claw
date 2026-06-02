@@ -313,15 +313,14 @@ describe("action-policy tools", () => {
 			expect(channel.getSent()).toHaveLength(0);
 		});
 
-		it("blocks prep on a forced-escalate account", async () => {
+		it("does NOT block prep — a CSM-facing artifact is exempt from the override gate", async () => {
 			const t = toolsWithOverride({ acme: "escalate" });
 			const res = await t.get("prep")!.execute({
 				customer_id: "acme",
 				artifact_type: "renewal brief",
 				body: "...",
 			});
-			expect(res.success).toBe(false);
-			expect(res.details?.requiredBand).toBe("escalate");
+			expect(res.success).toBe(true);
 		});
 
 		it("still ALLOWS escalate on a forced-escalate account", async () => {

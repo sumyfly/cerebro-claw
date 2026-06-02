@@ -93,10 +93,13 @@ describe("createCspAccountSource — engine injection", () => {
 		const store = new InMemoryStore();
 		const source = createCspAccountSource(opts(store));
 
-		// Cycle 1: first look — no prior decision, so no "no change" line, and the
-		// fingerprint gets recorded.
+		// Cycle 1: first look — no prior decision, so no "no change" line. The
+		// fingerprint is persisted by onEvaluated (after the review), NOT by
+		// buildSummary (which is side-effect free).
 		const first = await source.buildSummary(ID, "Acme");
 		expect(first).not.toContain("No material change");
+		expect(await store.getLastDecision(ID)).toBeNull(); // buildSummary didn't record
+		await source.onEvaluated!(ID);
 		expect(await store.getLastDecision(ID)).not.toBeNull();
 
 		// Cycle 2: identical CSP data → fingerprint matches → the agent is told
@@ -113,10 +116,12 @@ describe("createCspAccountSource — engine injection", () => {
 			[`/api/v1/accounts/${ID}/engagement`]: [],
 		});
 
-		// Cycle 1 at health 80 — no prior, so no health trend yet; score recorded.
+		// Cycle 1 at health 80 — no prior; onEvaluated records the score.
 		mockCsp(acct(80));
-		const first = await createCspAccountSource(opts(store)).buildSummary(ID, "Acme");
+		const s1 = createCspAccountSource(opts(store));
+		const first = await s1.buildSummary(ID, "Acme");
 		expect(first).toContain("Health: 80");
+		await s1.onEvaluated!(ID);
 		expect(await store.getLastDecision(ID)).toMatchObject({ healthScore: 80 });
 
 		// Cycle 2 at health 54 — prior was 80 → trend down surfaced to the agent.

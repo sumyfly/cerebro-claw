@@ -86,6 +86,7 @@ async function main(): Promise<void> {
 			)) as { text?: string };
 			text = res?.text ?? "";
 		} finally {
+			await source.onEvaluated?.(acct.id);
 			await agent.close();
 		}
 
