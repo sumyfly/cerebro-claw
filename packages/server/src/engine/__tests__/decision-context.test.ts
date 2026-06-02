@@ -43,6 +43,19 @@ describe("renderDecisionContext", () => {
 		expect(ctx).toContain("Default to NO action");
 	});
 
+	it("suppresses a bookkeeping placeholder band in the no-change line", () => {
+		const base: Partial<AccountSnapshot> = { healthScore: { grade: "C", trend: "flat" } };
+		const first = sig(base);
+		const ctx = renderDecisionContext(
+			sig({
+				...base,
+				lastDecision: { signalFingerprint: first.signalFingerprint, band: "reviewed" },
+			}),
+		);
+		expect(ctx).toContain("No material change since last cycle");
+		expect(ctx).not.toContain("last decision");
+	});
+
 	it("does NOT add the no-change line on a first look", () => {
 		const ctx = renderDecisionContext(sig({ healthScore: { grade: "A", trend: "flat" } }));
 		expect(ctx).not.toContain("No material change");

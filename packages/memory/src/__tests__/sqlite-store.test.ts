@@ -153,3 +153,23 @@ describe("SqliteStore decision memory", () => {
 		expect((await s.getLastDecision("c1"))?.signalFingerprint).toBe("fp-2");
 	});
 });
+
+describe("SqliteStore decision memory survives reopen", () => {
+	const DB = "/tmp/cerebro-claw-decisions-reopen-test.db";
+	it("persists a decision across store instances (reopen)", async () => {
+		try {
+			unlinkSync(DB);
+		} catch {}
+		const a = new SqliteStore(DB);
+		await a.recordDecision({
+			customerId: "c1",
+			signalFingerprint: "fp-persist",
+			band: "act",
+			ts: new Date("2026-06-02T00:00:00Z"),
+		});
+		a.close();
+		const b = new SqliteStore(DB);
+		expect((await b.getLastDecision("c1"))?.signalFingerprint).toBe("fp-persist");
+		b.close();
+	});
+});

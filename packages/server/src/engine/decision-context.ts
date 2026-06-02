@@ -43,12 +43,17 @@ export function renderDecisionContext(signals: DecisionSignals, instincts: strin
 		);
 	}
 
-	// Change detection: steer away from re-acting on an unchanged account.
+	// Change detection: steer away from re-acting on an unchanged account. Only
+	// surface "last decision: X" when X is a real band — never a bookkeeping
+	// placeholder (the persisted record may only carry a fingerprint).
 	if (!signals.changedSinceLastCycle) {
+		const realBands = ["act", "notify-then-act", "escalate", "prep"];
+		const lastBandNote =
+			signals.lastBand && realBands.includes(signals.lastBand)
+				? ` (last decision: ${signals.lastBand})`
+				: "";
 		lines.push(
-			`- No material change since last cycle (last decision: ${
-				signals.lastBand ?? "none"
-			}). Default to NO action unless a time-based trigger (e.g. a renewal window opening) now applies.`,
+			`- No material change since last cycle${lastBandNote}. Default to NO action unless a time-based trigger (e.g. a renewal window opening) now applies.`,
 		);
 	}
 
