@@ -1,12 +1,14 @@
-import { describe, it, expect, vi } from "vitest";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { createMcpHandler } from "../mcp-server.js";
 import type { ToolDefinition } from "@cerebro-claw/shared";
+import { describe, expect, it, vi } from "vitest";
+import { createMcpHandler } from "../mcp-server.js";
 
 function makeTool(
 	name: string,
-	execute: (params: Record<string, unknown>) => Promise<{ content: string; success: boolean }> = async () => ({
+	execute: (
+		params: Record<string, unknown>,
+	) => Promise<{ content: string; success: boolean }> = async () => ({
 		content: `executed ${name}`,
 		success: true,
 	}),
@@ -67,10 +69,11 @@ async function withMcpServer(
 describe("MCP server", () => {
 	it("tools/list returns every registered tool with description and inputSchema", async () => {
 		const tools = [makeTool("alpha"), makeTool("beta")];
-		const { status, json } = await withMcpServer(
-			() => tools,
-			{ jsonrpc: "2.0", id: 1, method: "tools/list" },
-		);
+		const { status, json } = await withMcpServer(() => tools, {
+			jsonrpc: "2.0",
+			id: 1,
+			method: "tools/list",
+		});
 		expect(status).toBe(200);
 		expect(json.result.tools).toHaveLength(2);
 		const names = json.result.tools.map((t: { name: string }) => t.name);
@@ -135,15 +138,12 @@ describe("MCP server", () => {
 			}),
 		];
 
-		const { status, json } = await withMcpServer(
-			() => tools,
-			{
-				jsonrpc: "2.0",
-				id: 2,
-				method: "tools/call",
-				params: { name: "beta", arguments: { input: "hello" } },
-			},
-		);
+		const { status, json } = await withMcpServer(() => tools, {
+			jsonrpc: "2.0",
+			id: 2,
+			method: "tools/call",
+			params: { name: "beta", arguments: { input: "hello" } },
+		});
 		expect(status).toBe(200);
 		expect(json.result.isError).toBeFalsy();
 		expect(json.result.content[0].text).toBe("beta result");
@@ -151,32 +151,24 @@ describe("MCP server", () => {
 	});
 
 	it("tools/call surfaces unknown tool as isError with a clear message", async () => {
-		const { json } = await withMcpServer(
-			() => [makeTool("only-one")],
-			{
-				jsonrpc: "2.0",
-				id: 3,
-				method: "tools/call",
-				params: { name: "ghost", arguments: {} },
-			},
-		);
+		const { json } = await withMcpServer(() => [makeTool("only-one")], {
+			jsonrpc: "2.0",
+			id: 3,
+			method: "tools/call",
+			params: { name: "ghost", arguments: {} },
+		});
 		expect(json.result.isError).toBe(true);
 		expect(json.result.content[0].text).toContain("Unknown tool: ghost");
 	});
 
 	it("tools/call surfaces tool failures as isError but does not crash", async () => {
-		const tools = [
-			makeTool("boom", async () => ({ content: "kaboom", success: false })),
-		];
-		const { json } = await withMcpServer(
-			() => tools,
-			{
-				jsonrpc: "2.0",
-				id: 4,
-				method: "tools/call",
-				params: { name: "boom", arguments: {} },
-			},
-		);
+		const tools = [makeTool("boom", async () => ({ content: "kaboom", success: false }))];
+		const { json } = await withMcpServer(() => tools, {
+			jsonrpc: "2.0",
+			id: 4,
+			method: "tools/call",
+			params: { name: "boom", arguments: {} },
+		});
 		expect(json.result.isError).toBe(true);
 		expect(json.result.content[0].text).toBe("kaboom");
 	});
@@ -192,15 +184,12 @@ describe("MCP server", () => {
 				},
 			} as ToolDefinition,
 		];
-		const { json } = await withMcpServer(
-			() => tools,
-			{
-				jsonrpc: "2.0",
-				id: 5,
-				method: "tools/call",
-				params: { name: "exploder", arguments: {} },
-			},
-		);
+		const { json } = await withMcpServer(() => tools, {
+			jsonrpc: "2.0",
+			id: 5,
+			method: "tools/call",
+			params: { name: "exploder", arguments: {} },
+		});
 		expect(json.result.isError).toBe(true);
 		expect(json.result.content[0].text).toContain("threw: kaboom");
 	});

@@ -28,9 +28,7 @@ export class Router {
 	resolve(message: InboundMessage): SessionRoute | null {
 		const key = `${message.channelType}:${message.senderId}`;
 		return (
-			this.routes.get(key) ??
-			this.routes.get(`${message.channelType}:${message.channelId}`) ??
-			null
+			this.routes.get(key) ?? this.routes.get(`${message.channelType}:${message.channelId}`) ?? null
 		);
 	}
 
@@ -41,10 +39,7 @@ export class Router {
 		return response.text;
 	}
 
-	private async buildContext(
-		message: InboundMessage,
-		route: SessionRoute | null,
-	): Promise<string> {
+	private async buildContext(message: InboundMessage, route: SessionRoute | null): Promise<string> {
 		const parts: string[] = [];
 
 		if (route) {
@@ -67,9 +62,7 @@ export class Router {
 				);
 				const portfolio = owned.length > 0 ? owned : profiles;
 				if (portfolio.length > 0) {
-					const list = portfolio
-						.map((p) => `- ${p.companyName} (id: ${p.id})`)
-						.join("\n");
+					const list = portfolio.map((p) => `- ${p.companyName} (id: ${p.id})`).join("\n");
 					const label = owned.length > 0 ? "Your customers" : "Known customers";
 					parts.push(`${label}:\n${list}`);
 				}

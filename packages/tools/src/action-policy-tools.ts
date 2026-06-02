@@ -166,7 +166,9 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 				1440,
 				Math.max(
 					1,
-					Number.isFinite(rawPause) && rawPause! > 0 ? (rawPause as number) : defaultPauseMinutes,
+					Number.isFinite(rawPause) && (rawPause as number) > 0
+						? (rawPause as number)
+						: defaultPauseMinutes,
 				),
 			);
 			const created = now();

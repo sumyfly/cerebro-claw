@@ -14,7 +14,9 @@ export function createMessageToolsExtension(opts: MessageToolsExtensionOptions):
 			const tools = createMessageTools({
 				pendingActions: opts.pendingActions,
 				async sendToChannel(channelKey, recipientId, text) {
-					const sender = opts.host.getChannelSender(channelKey === "default" ? undefined : channelKey);
+					const sender = opts.host.getChannelSender(
+						channelKey === "default" ? undefined : channelKey,
+					);
 					if (sender) await sender.send(recipientId, text);
 				},
 				async onActionCreated(action) {

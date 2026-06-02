@@ -73,7 +73,7 @@ const sampleExtension: Extension = {
 						"5",
 						url,
 					]);
-					const code = parseInt(stdout, 10);
+					const code = Number.parseInt(stdout, 10);
 					return {
 						content: `${url} → HTTP ${code}`,
 						success: code >= 200 && code < 400,

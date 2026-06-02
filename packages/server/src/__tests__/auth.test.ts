@@ -1,12 +1,16 @@
-import { describe, it, expect, vi } from "vitest";
+import type { NextFunction, Request, Response } from "express";
+import { describe, expect, it, vi } from "vitest";
 import { createAdminAuth } from "../auth.js";
-import type { Request, Response, NextFunction } from "express";
 
 function makeReq(path: string, authorization?: string): Request {
 	return { path, headers: authorization ? { authorization } : {} } as unknown as Request;
 }
 
-function makeRes(): { res: Response; jsonSpy: ReturnType<typeof vi.fn>; statusSpy: ReturnType<typeof vi.fn> } {
+function makeRes(): {
+	res: Response;
+	jsonSpy: ReturnType<typeof vi.fn>;
+	statusSpy: ReturnType<typeof vi.fn>;
+} {
 	const jsonSpy = vi.fn();
 	const statusSpy = vi.fn(() => ({ json: jsonSpy }));
 	const res = { status: statusSpy } as unknown as Response;

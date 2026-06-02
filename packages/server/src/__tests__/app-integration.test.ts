@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import request from "supertest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Express } from "express";
+import request from "supertest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../app.js";
 
 describe("App integration", () => {
@@ -51,9 +51,7 @@ describe("App integration", () => {
 	});
 
 	it("respects incoming X-Request-Id", async () => {
-		const res = await request(app)
-			.get("/health")
-			.set("X-Request-Id", "external-trace-1");
+		const res = await request(app).get("/health").set("X-Request-Id", "external-trace-1");
 		expect(res.headers["x-request-id"]).toBe("external-trace-1");
 	});
 
@@ -64,15 +62,13 @@ describe("App integration", () => {
 	});
 
 	it("creates and retrieves a customer", async () => {
-		const create = await request(app)
-			.post("/api/customers")
-			.send({
-				id: "test-co",
-				companyName: "Test Co",
-				plan: "Growth",
-				contacts: [],
-				csmOwnerId: "sarah",
-			});
+		const create = await request(app).post("/api/customers").send({
+			id: "test-co",
+			companyName: "Test Co",
+			plan: "Growth",
+			contacts: [],
+			csmOwnerId: "sarah",
+		});
 		expect(create.status).toBe(201);
 
 		const get = await request(app).get("/api/customers/test-co");
@@ -96,14 +92,10 @@ describe("App integration", () => {
 	});
 
 	it("approves and rejects pending actions", async () => {
-		const approve = await request(app)
-			.post("/api/actions/nonexistent/approve")
-			.send({});
+		const approve = await request(app).post("/api/actions/nonexistent/approve").send({});
 		expect(approve.status).toBe(404);
 
-		const reject = await request(app)
-			.post("/api/actions/nonexistent/reject")
-			.send({});
+		const reject = await request(app).post("/api/actions/nonexistent/reject").send({});
 		expect(reject.status).toBe(404);
 	});
 
@@ -162,16 +154,12 @@ describe("App integration", () => {
 	});
 
 	it("POST /api/ledger/:id/cancel rejects unknown ids", async () => {
-		const res = await request(app)
-			.post("/api/ledger/unknown-id/cancel")
-			.send({ reason: "test" });
+		const res = await request(app).post("/api/ledger/unknown-id/cancel").send({ reason: "test" });
 		expect(res.status).toBe(404);
 	});
 
 	it("POST /api/ledger/:id/resolve rejects unknown ids", async () => {
-		const res = await request(app)
-			.post("/api/ledger/unknown-id/resolve")
-			.send({ outcome: "test" });
+		const res = await request(app).post("/api/ledger/unknown-id/resolve").send({ outcome: "test" });
 		expect(res.status).toBe(404);
 	});
 });

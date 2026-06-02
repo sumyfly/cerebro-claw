@@ -1,6 +1,6 @@
-import { describe, it, expect, vi } from "vitest";
-import { BrainLoop, type EventEmitter } from "../brain-loop.js";
 import { InMemoryStore } from "@cerebro-claw/memory";
+import { describe, expect, it, vi } from "vitest";
+import { BrainLoop, type EventEmitter } from "../brain-loop.js";
 
 describe("BrainLoop events", () => {
 	it("emits brain_loop_cycle_start and brain_loop_cycle_end", async () => {

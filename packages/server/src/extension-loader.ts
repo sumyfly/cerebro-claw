@@ -1,5 +1,5 @@
-import { readdir, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { readdir, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Extension } from "@cerebro-claw/shared";
@@ -30,7 +30,10 @@ export async function loadExtensionsFromDir(dir: string): Promise<Extension[]> {
 		const stats = await stat(fullPath);
 		let modulePath: string | null = null;
 
-		if (stats.isFile() && (entry.endsWith(".js") || entry.endsWith(".ts") || entry.endsWith(".mjs"))) {
+		if (
+			stats.isFile() &&
+			(entry.endsWith(".js") || entry.endsWith(".ts") || entry.endsWith(".mjs"))
+		) {
 			modulePath = fullPath;
 		} else if (stats.isDirectory()) {
 			for (const candidate of ["index.ts", "index.js", "index.mjs"]) {
@@ -48,7 +51,12 @@ export async function loadExtensionsFromDir(dir: string): Promise<Extension[]> {
 			const mod = await import(pathToFileURL(modulePath).href);
 			const candidate = mod.default ?? mod.extension ?? mod;
 			const ext = typeof candidate === "function" ? await candidate() : candidate;
-			if (ext && typeof ext === "object" && typeof ext.id === "string" && typeof ext.factory === "function") {
+			if (
+				ext &&
+				typeof ext === "object" &&
+				typeof ext.id === "string" &&
+				typeof ext.factory === "function"
+			) {
 				extensions.push(ext);
 				console.log(`[extensions] Discovered: ${ext.id} (${entry})`);
 			} else {

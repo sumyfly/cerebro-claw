@@ -41,6 +41,7 @@ export class AgentRuntime {
 		if (!this.sessions.has(sessionId)) {
 			this.sessions.set(sessionId, []);
 		}
+		// biome-ignore lint/style/noNonNullAssertion: set on the line above when absent
 		return this.sessions.get(sessionId)!;
 	}
 

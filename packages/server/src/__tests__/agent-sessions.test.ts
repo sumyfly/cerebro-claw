@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { AgentRuntime } from "../agent-runtime.js";
 
 describe("AgentRuntime sessions", () => {

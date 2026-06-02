@@ -1,11 +1,23 @@
-import { Button, Card, Col, Row, Space, Statistic, Table, Tag, Typography, Badge, message } from "antd";
 import {
-	ArrowUpOutlined,
 	ArrowDownOutlined,
+	ArrowUpOutlined,
 	MinusOutlined,
-	WarningOutlined,
 	ThunderboltOutlined,
+	WarningOutlined,
 } from "@ant-design/icons";
+import {
+	Badge,
+	Button,
+	Card,
+	Col,
+	Row,
+	Space,
+	Statistic,
+	Table,
+	Tag,
+	Typography,
+	message,
+} from "antd";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -119,6 +131,7 @@ export function Dashboard() {
 			title: "Company",
 			key: "name",
 			render: (_: unknown, r: Customer) => (
+				// biome-ignore lint/a11y/useValidAnchor: antd table cell click-to-navigate via router
 				<a onClick={() => navigate(`/customers?id=${r.profile.id}`)}>
 					<strong>{r.profile.companyName}</strong>
 				</a>
@@ -134,8 +147,10 @@ export function Dashboard() {
 			},
 			sorter: (a: Customer, b: Customer) => {
 				const order = { critical: 0, "at-risk": 1, good: 2 };
-				return (order[a.state?.health as keyof typeof order] ?? 3) -
-					(order[b.state?.health as keyof typeof order] ?? 3);
+				return (
+					(order[a.state?.health as keyof typeof order] ?? 3) -
+					(order[b.state?.health as keyof typeof order] ?? 3)
+				);
 			},
 		},
 		{
@@ -145,15 +160,18 @@ export function Dashboard() {
 				const n = r.state?.openIssues ?? 0;
 				return n > 0 ? <Badge count={n} /> : <span style={{ color: "#8c8c8c" }}>0</span>;
 			},
-			sorter: (a: Customer, b: Customer) =>
-				(b.state?.openIssues ?? 0) - (a.state?.openIssues ?? 0),
+			sorter: (a: Customer, b: Customer) => (b.state?.openIssues ?? 0) - (a.state?.openIssues ?? 0),
 		},
 		{
 			title: "Usage",
 			key: "usage",
 			render: (_: unknown, r: Customer) => {
 				const t = r.state?.usageTrend ?? "flat";
-				return <>{trendIcon[t] ?? null} {t}</>;
+				return (
+					<>
+						{trendIcon[t] ?? null} {t}
+					</>
+				);
 			},
 		},
 		{
@@ -173,7 +191,12 @@ export function Dashboard() {
 			render: (_: unknown, r: Customer) => {
 				const days = daysUntil(r.state?.renewalDate);
 				if (days === null) return "-";
-				if (days < 30) return <span style={{ color: "#ff4d4f" }}><WarningOutlined /> {days}d</span>;
+				if (days < 30)
+					return (
+						<span style={{ color: "#ff4d4f" }}>
+							<WarningOutlined /> {days}d
+						</span>
+					);
 				if (days < 60) return <span style={{ color: "#faad14" }}>{days}d</span>;
 				return <span>{days}d</span>;
 			},
@@ -211,14 +234,18 @@ export function Dashboard() {
 							<Statistic
 								title="Notifies in-flight"
 								value={counters.counts.notifies.inFlight}
-								valueStyle={counters.counts.notifies.inFlight > 0 ? { color: "#1677ff" } : undefined}
+								valueStyle={
+									counters.counts.notifies.inFlight > 0 ? { color: "#1677ff" } : undefined
+								}
 							/>
 						</Col>
 						<Col span={6}>
 							<Statistic
 								title="Escalations need you"
 								value={counters.counts.escalations.needsCsm}
-								valueStyle={counters.counts.escalations.needsCsm > 0 ? { color: "#ff4d4f" } : undefined}
+								valueStyle={
+									counters.counts.escalations.needsCsm > 0 ? { color: "#ff4d4f" } : undefined
+								}
 								prefix={counters.counts.escalations.needsCsm > 0 ? <WarningOutlined /> : undefined}
 							/>
 						</Col>
@@ -277,7 +304,14 @@ export function Dashboard() {
 					</Card>
 				</Col>
 			</Row>
-			<Card title="Customers" extra={<Typography.Text type="secondary">Total ARR: ${totalArr.toLocaleString()}</Typography.Text>}>
+			<Card
+				title="Customers"
+				extra={
+					<Typography.Text type="secondary">
+						Total ARR: ${totalArr.toLocaleString()}
+					</Typography.Text>
+				}
+			>
 				<Table
 					dataSource={customers}
 					columns={columns}

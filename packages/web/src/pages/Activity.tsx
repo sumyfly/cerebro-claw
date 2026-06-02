@@ -1,5 +1,5 @@
-import { Button, Card, Empty, List, Space, Tag, Typography } from "antd";
 import { CheckOutlined, CloseOutlined } from "@ant-design/icons";
+import { Button, Card, Empty, List, Space, Tag, Typography } from "antd";
 import { useEffect, useState } from "react";
 
 interface PendingAction {
@@ -67,19 +67,14 @@ export function Activity() {
 								<Space>
 									<Tag>{item.type}</Tag>
 									<Tag color={statusColor[item.status]}>{item.status}</Tag>
-									<Typography.Text type="secondary">
-										{item.customerId}
-									</Typography.Text>
+									<Typography.Text type="secondary">{item.customerId}</Typography.Text>
 									<Typography.Text type="secondary">
 										{new Date(item.createdAt).toLocaleString()}
 									</Typography.Text>
 								</Space>
 								<Typography.Text>{item.description}</Typography.Text>
 								{item.draft && (
-									<Card
-										size="small"
-										style={{ background: "#f6ffed", borderColor: "#b7eb8f" }}
-									>
+									<Card size="small" style={{ background: "#f6ffed", borderColor: "#b7eb8f" }}>
 										<Typography.Text type="secondary">Draft:</Typography.Text>
 										<br />
 										<Typography.Text style={{ whiteSpace: "pre-wrap" }}>
@@ -124,9 +119,7 @@ export function Activity() {
 									<Tag>{item.type}</Tag>
 									<Tag color={statusColor[item.status]}>{item.status}</Tag>
 									<Typography.Text>{item.description}</Typography.Text>
-									<Typography.Text type="secondary">
-										{item.customerId}
-									</Typography.Text>
+									<Typography.Text type="secondary">{item.customerId}</Typography.Text>
 								</Space>
 							</Card>
 						)}

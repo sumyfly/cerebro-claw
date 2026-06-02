@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import { Router } from "../router.js";
 import { InMemoryStore } from "@cerebro-claw/memory";
 import type { CustomerProfile, InboundMessage } from "@cerebro-claw/shared";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Router } from "../router.js";
 
 const mockAgent = {
 	prompt: vi.fn().mockResolvedValue({ text: "Agent response", toolCalls: [] }),

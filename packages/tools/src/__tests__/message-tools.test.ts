@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import { createMessageTools } from "../message-tools.js";
 import type { PendingAction, ToolDefinition } from "@cerebro-claw/shared";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createMessageTools } from "../message-tools.js";
 
 describe("message tools", () => {
 	let tools: ToolDefinition[];

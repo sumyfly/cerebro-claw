@@ -1,5 +1,5 @@
-import type { MemoryStore, ToolDefinition } from "@cerebro-claw/shared";
 import { randomUUID } from "node:crypto";
+import type { MemoryStore, ToolDefinition } from "@cerebro-claw/shared";
 
 export function createMemoryTools(store: MemoryStore): ToolDefinition[] {
 	const memoryRead: ToolDefinition = {
@@ -89,8 +89,7 @@ export function createMemoryTools(store: MemoryStore): ToolDefinition[] {
 			if (existing) {
 				const updated = { ...existing, updatedAt: new Date() };
 				if (params.health) updated.health = params.health as typeof updated.health;
-				if (params.open_issues !== undefined)
-					updated.openIssues = params.open_issues as number;
+				if (params.open_issues !== undefined) updated.openIssues = params.open_issues as number;
 				if (params.usage_trend)
 					updated.usageTrend = params.usage_trend as typeof updated.usageTrend;
 				await store.updateState(updated);
@@ -100,7 +99,13 @@ export function createMemoryTools(store: MemoryStore): ToolDefinition[] {
 				await store.addHistory({
 					id: randomUUID(),
 					customerId: id,
-					type: params.history_type as "call" | "email" | "ticket" | "message" | "event" | "decision",
+					type: params.history_type as
+						| "call"
+						| "email"
+						| "ticket"
+						| "message"
+						| "event"
+						| "decision",
 					summary: params.history_summary as string,
 					timestamp: new Date(),
 				});

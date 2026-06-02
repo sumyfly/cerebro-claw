@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { ExtensionAPI, ToolDefinition } from "@cerebro-claw/shared";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // The extension lives at extensions/csp-connector/ at the repo root.
 // It's a file-loaded extension, but we test it directly here since the
 // server package already has vitest configured.
@@ -70,7 +70,9 @@ describe("csp-connector", () => {
 	it("validates business_id format (rejects non-hex)", async () => {
 		const { api, tools } = makeApi({ CSP_TOKEN: "fake" });
 		await cspExtension.factory(api);
-		const result = await tools.get("csp_get_account")!.execute({ business_id: "not-a-business-id" });
+		const result = await tools
+			.get("csp_get_account")!
+			.execute({ business_id: "not-a-business-id" });
 		expect(result.success).toBe(false);
 		expect(result.content).toContain("Invalid business_id");
 	});
@@ -198,7 +200,9 @@ describe("csp-connector", () => {
 		const result = await tools.get("csp_get_engagement")!.execute({ business_id: VALID_ID });
 
 		expect(result.success).toBe(true);
-		expect(fetchMock.mock.calls[0][0]).toBe(`http://csp.test/api/v1/accounts/${VALID_ID}/engagement`);
+		expect(fetchMock.mock.calls[0][0]).toBe(
+			`http://csp.test/api/v1/accounts/${VALID_ID}/engagement`,
+		);
 	});
 
 	it("csp_get_notes builds the right query string", async () => {
@@ -297,7 +301,9 @@ describe("csp-connector", () => {
 
 		const { api, tools } = makeApi({ CSP_TOKEN: "tok", CSP_BASE_URL: "http://csp.test" });
 		await cspExtension.factory(api);
-		await tools.get("csp_get_renewals")!.execute({ business_id: VALID_ID, status: "OPEN", limit: 5 });
+		await tools
+			.get("csp_get_renewals")!
+			.execute({ business_id: VALID_ID, status: "OPEN", limit: 5 });
 
 		const url = fetchMock.mock.calls[0][0] as string;
 		expect(url).toContain(`/api/v1/accounts/${VALID_ID}/renewals?`);

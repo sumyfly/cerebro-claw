@@ -31,7 +31,11 @@ export function verifyLarkSignature(
 }
 
 export type MessageHandler = (message: InboundMessage) => Promise<void>;
-export type CardActionHandler = (actionId: string, actionValue: Record<string, string>, userId: string) => Promise<void>;
+export type CardActionHandler = (
+	actionId: string,
+	actionValue: Record<string, string>,
+	userId: string,
+) => Promise<void>;
 
 export class LarkBot implements ChannelAdapter {
 	readonly type = "lark";
@@ -226,7 +230,12 @@ export interface LarkCardAction {
 	value: Record<string, string>;
 }
 
-export function buildApprovalCard(actionId: string, customerName: string, description: string, draftText: string): LarkCard {
+export function buildApprovalCard(
+	actionId: string,
+	customerName: string,
+	description: string,
+	draftText: string,
+): LarkCard {
 	return {
 		config: { wide_screen_mode: true },
 		header: {

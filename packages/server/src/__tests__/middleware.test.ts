@@ -1,8 +1,15 @@
-import { describe, it, expect, vi } from "vitest";
+import type { NextFunction, Request, Response } from "express";
+import { describe, expect, it, vi } from "vitest";
 import { errorHandler, notFoundHandler, requestLogger } from "../middleware.js";
-import type { Request, Response, NextFunction } from "express";
 
-function makeRes(): { res: Response; jsonSpy: ReturnType<typeof vi.fn>; statusSpy: ReturnType<typeof vi.fn>; setHeaderSpy: ReturnType<typeof vi.fn>; locals: Record<string, unknown>; onCallbacks: Record<string, () => void> } {
+function makeRes(): {
+	res: Response;
+	jsonSpy: ReturnType<typeof vi.fn>;
+	statusSpy: ReturnType<typeof vi.fn>;
+	setHeaderSpy: ReturnType<typeof vi.fn>;
+	locals: Record<string, unknown>;
+	onCallbacks: Record<string, () => void>;
+} {
 	const jsonSpy = vi.fn();
 	const statusSpy = vi.fn(() => ({ json: jsonSpy }));
 	const setHeaderSpy = vi.fn();
@@ -54,9 +61,7 @@ describe("errorHandler", () => {
 		const req = { method: "GET", path: "/boom" } as unknown as Request;
 		handler(new Error("kaboom"), req, res, vi.fn() as unknown as NextFunction);
 		expect(statusSpy).toHaveBeenCalledWith(500);
-		expect(jsonSpy).toHaveBeenCalledWith(
-			expect.objectContaining({ error: "kaboom" }),
-		);
+		expect(jsonSpy).toHaveBeenCalledWith(expect.objectContaining({ error: "kaboom" }));
 	});
 
 	it("uses err.status when provided", () => {

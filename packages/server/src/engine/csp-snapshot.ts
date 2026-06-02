@@ -69,10 +69,11 @@ export function deriveHealthTrend(
 export function cspToSnapshot(raw: CspRaw, now: Date): AccountSnapshot {
 	const account = raw.account ?? {};
 	const bm = (account.businessMetrics ?? {}) as Record<string, unknown>;
-	const txnBreakdown = ((bm.transactionMetrics as Record<string, unknown> | undefined)?.breakdown ??
-		undefined) as Record<string, unknown> | undefined;
+	const txnBreakdown = (
+		bm.transactionMetrics as { breakdown?: Record<string, unknown> } | undefined
+	)?.breakdown;
 
-	const overall = ((raw.health ?? {}).overall ?? {}) as Record<string, unknown>;
+	const overall = (raw.health?.overall ?? {}) as Record<string, unknown>;
 
 	// logins-ish magnitude: distinct users seen in the last 30 days.
 	let logins30d: number | undefined;

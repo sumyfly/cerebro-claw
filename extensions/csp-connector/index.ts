@@ -290,12 +290,12 @@ const extension: Extension = {
 					title: { type: "string", description: "Optional short title for the note." },
 					type: {
 						type: "string",
-						description: `Note type. Defaults to GENERAL.`,
+						description: "Note type. Defaults to GENERAL.",
 						enum: [...NOTE_TYPES],
 					},
 					priority: {
 						type: "string",
-						description: `Note priority. Defaults to NORMAL.`,
+						description: "Note priority. Defaults to NORMAL.",
 						enum: [...PRIORITIES],
 					},
 					is_private: {

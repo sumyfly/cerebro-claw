@@ -1,5 +1,5 @@
-import type { Request, Response, NextFunction } from "express";
 import { randomUUID } from "node:crypto";
+import type { NextFunction, Request, Response } from "express";
 
 /**
  * Tags every incoming request with a UUID and logs method + path + status + duration.
@@ -38,8 +38,10 @@ export function errorHandler() {
 		// Don't override a response that already started
 		if (res.headersSent) return;
 
-		const status = (err as { status?: number; statusCode?: number })?.status ??
-			(err as { statusCode?: number })?.statusCode ?? 500;
+		const status =
+			(err as { status?: number; statusCode?: number })?.status ??
+			(err as { statusCode?: number })?.statusCode ??
+			500;
 		res.status(status).json({
 			error: message,
 			requestId,

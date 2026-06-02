@@ -76,7 +76,8 @@ export class ExtensionHost {
 		return {
 			send: (recipientId, text) => channel.send(recipientId, text),
 			sendCard: channel.sendCard
-				? (recipientId, card) => channel.sendCard!(recipientId, card)
+				? // biome-ignore lint/style/noNonNullAssertion: guarded by the ternary above
+					(recipientId, card) => channel.sendCard!(recipientId, card)
 				: undefined,
 		};
 	}

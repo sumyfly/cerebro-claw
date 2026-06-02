@@ -1,9 +1,6 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { InMemoryStore } from "@cerebro-claw/memory";
-import {
-	createCspAccountSource,
-	createLocalAccountSource,
-} from "../brain-loop.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createCspAccountSource, createLocalAccountSource } from "../brain-loop.js";
 
 describe("createLocalAccountSource", () => {
 	it("lists profiles from the store", async () => {
