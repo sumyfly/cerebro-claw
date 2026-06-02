@@ -1,5 +1,6 @@
 import type { ExtensionEvent, MemoryStore } from "@cerebro-claw/shared";
 import { type AgentBackend, friendlyAnthropicError } from "./agent-runtime.js";
+import { cspToSnapshot } from "./engine/csp-snapshot.js";
 import { renderDecisionContext } from "./engine/decision-context.js";
 import { parseOverrideBand } from "./engine/overrides.js";
 import { type AccountSnapshot, computeSignals } from "./engine/signals.js";
@@ -82,14 +83,6 @@ export interface CspAccountSourceOptions {
 	now?: () => Date;
 }
 
-/** Pull an array of renewal records out of whatever shape CSP returns. */
-function extractRenewals(data: unknown): AccountSnapshot["renewals"] {
-	if (Array.isArray(data)) return data as AccountSnapshot["renewals"];
-	const items = (data as { items?: unknown })?.items;
-	if (Array.isArray(items)) return items as AccountSnapshot["renewals"];
-	return undefined;
-}
-
 export function createCspAccountSource(opts: CspAccountSourceOptions): AccountSource {
 	const baseUrl = opts.baseUrl.replace(/\/$/, "");
 	const timeoutMs = opts.timeoutMs ?? 10_000;
@@ -164,27 +157,25 @@ export function createCspAccountSource(opts: CspAccountSourceOptions): AccountSo
 			// reasons with structured inputs (health/usage/renewal/override/change),
 			// not just raw text. Degrade gracefully to the pointer prompt on failure.
 			try {
-				const [account, healthScore, engagement, renewals] = await Promise.all([
+				const [account, health, engagement] = await Promise.all([
 					getData(`/api/v1/accounts/${id}`),
 					getData(`/api/v1/accounts/${id}/health-score`),
 					getData(`/api/v1/accounts/${id}/engagement`),
-					getData(`/api/v1/accounts/${id}/renewals`),
 				]);
 				const instinctEntries = opts.store ? await opts.store.getInstincts(id) : [];
 				const instincts = instinctEntries.map((i) => i.content);
 				const overrideBand = parseOverrideBand(instincts);
 				const last = opts.store ? await opts.store.getLastDecision(id) : null;
+				const now = (opts.now ?? (() => new Date()))();
+				// Map the REAL CSP shapes into the engine snapshot, then layer in
+				// agent-private memory (instincts, overrides, last decision).
 				const snapshot: AccountSnapshot = {
-					account: account as AccountSnapshot["account"],
-					healthScore: healthScore as AccountSnapshot["healthScore"],
-					engagement: engagement as AccountSnapshot["engagement"],
-					renewals: extractRenewals(renewals),
+					...cspToSnapshot({ account, health, engagement }, now),
 					instincts,
 					overrides: overrideBand ? [{ rule: "stored override", forcesBand: overrideBand }] : [],
 					lastDecision: last
 						? { signalFingerprint: last.signalFingerprint, band: last.band, reason: last.reason }
 						: undefined,
-					now: (opts.now ?? (() => new Date()))(),
 				};
 				const signals = computeSignals(snapshot);
 				// Persist this cycle's signal fingerprint so next cycle can detect
@@ -197,7 +188,7 @@ export function createCspAccountSource(opts: CspAccountSourceOptions): AccountSo
 						signalFingerprint: signals.signalFingerprint,
 						band: last?.band ?? "reviewed",
 						reason: "auto: brain-loop signal snapshot",
-						ts: (opts.now ?? (() => new Date()))(),
+						ts: now,
 					});
 				}
 				const context = renderDecisionContext(signals, instincts);

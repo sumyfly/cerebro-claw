@@ -31,15 +31,28 @@ const opts = (store?: InMemoryStore) => ({
 describe("createCspAccountSource — engine injection", () => {
 	it("injects a computed decision-signals block + the pointer prompt", async () => {
 		mockCsp({
-			[`/api/v1/accounts/${ID}`]: { id: ID, name: "Acme", contractValue: 50000 },
-			[`/api/v1/accounts/${ID}/health-score`]: { overallScore: 41, grade: "D", trend: "down" },
-			[`/api/v1/accounts/${ID}/engagement`]: { logins30d: 12, trend: "down" },
+			// Real CSP shapes: health.overall.{score,category}; account.businessMetrics.
+			[`/api/v1/accounts/${ID}`]: {
+				id: ID,
+				name: "Acme",
+				businessMetrics: {
+					mrr: 4000,
+					renewalDate: "2026-07-02T00:00:00Z",
+					transactionMetrics: {
+						breakdown: { pos_txn_count_past30days: 400, pos_txn_count_past7days: 40 },
+					},
+				},
+			},
+			[`/api/v1/accounts/${ID}/health-score`]: { overall: { score: 41, category: "AT_RISK" } },
+			[`/api/v1/accounts/${ID}/engagement`]: [{ last_seen: "2026-06-01T00:00:00Z" }],
 		});
 		const source = createCspAccountSource(opts());
 		const summary = await source.buildSummary(ID, "Acme");
 		expect(summary).toContain("Decision signals (computed for you)");
-		expect(summary).toContain("Health: 41 (grade D), trend down");
-		expect(summary).toContain("$50,000/yr");
+		expect(summary).toContain("Health: 41 (grade AT_RISK)");
+		expect(summary).toContain("Usage trend: down"); // 7d=40 << weekly avg ~93
+		expect(summary).toContain("$48,000/yr"); // mrr 4000 * 12
+		expect(summary).toContain("Renewal: 30 day(s) away");
 		// Pointer prompt is still appended.
 		expect(summary).toContain("Pick the right band and CALL ITS TOOL");
 	});
@@ -47,8 +60,8 @@ describe("createCspAccountSource — engine injection", () => {
 	it("surfaces a stored override as a hard MUST directive", async () => {
 		mockCsp({
 			[`/api/v1/accounts/${ID}`]: { id: ID, name: "VIP" },
-			[`/api/v1/accounts/${ID}/health-score`]: { grade: "A", trend: "flat" },
-			[`/api/v1/accounts/${ID}/engagement`]: { trend: "up" },
+			[`/api/v1/accounts/${ID}/health-score`]: { overall: { score: 90, category: "EXCELLENT" } },
+			[`/api/v1/accounts/${ID}/engagement`]: [],
 		});
 		const store = new InMemoryStore();
 		await store.addInstinct({
@@ -65,9 +78,17 @@ describe("createCspAccountSource — engine injection", () => {
 
 	it("persists the signal fingerprint and reports no-change on the next cycle", async () => {
 		mockCsp({
-			[`/api/v1/accounts/${ID}`]: { id: ID, name: "Acme" },
-			[`/api/v1/accounts/${ID}/health-score`]: { grade: "C", trend: "flat" },
-			[`/api/v1/accounts/${ID}/engagement`]: { trend: "flat" },
+			[`/api/v1/accounts/${ID}`]: {
+				id: ID,
+				name: "Acme",
+				businessMetrics: {
+					transactionMetrics: {
+						breakdown: { pos_txn_count_past30days: 120, pos_txn_count_past7days: 28 },
+					},
+				},
+			},
+			[`/api/v1/accounts/${ID}/health-score`]: { overall: { score: 60, category: "MODERATE" } },
+			[`/api/v1/accounts/${ID}/engagement`]: [],
 		});
 		const store = new InMemoryStore();
 		const source = createCspAccountSource(opts(store));
