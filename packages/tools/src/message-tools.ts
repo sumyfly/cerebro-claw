@@ -1,5 +1,5 @@
-import type { ToolDefinition, PendingAction } from "@cerebro-claw/shared";
 import { randomUUID } from "node:crypto";
+import type { PendingAction, ToolDefinition } from "@cerebro-claw/shared";
 
 export interface MessageToolsContext {
 	pendingActions: Map<string, PendingAction>;

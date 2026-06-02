@@ -15,6 +15,15 @@ export interface StubSendRecord {
 	deliveredAt: Date;
 }
 
+export interface StubCallRecord {
+	callId: string;
+	customerId: string;
+	recipient: string;
+	script: string;
+	meta?: Record<string, unknown>;
+	placedAt: Date;
+}
+
 /**
  * Default customer channel — accepts every send, persists nothing, and prints
  * a one-line log so a dev tail can see the agent "doing" things. Real channels
@@ -29,6 +38,7 @@ export class StubCustomerChannel implements CustomerChannel {
 	readonly id = "stub";
 	private onSend: StubCustomerChannelOptions["onSend"];
 	private sent: StubSendRecord[] = [];
+	private calls: StubCallRecord[] = [];
 
 	constructor(opts: StubCustomerChannelOptions = {}) {
 		this.onSend = opts.onSend;
@@ -59,5 +69,31 @@ export class StubCustomerChannel implements CustomerChannel {
 	/** Test affordance — what got sent. */
 	getSent(): StubSendRecord[] {
 		return [...this.sent];
+	}
+
+	async call(input: {
+		customerId: string;
+		recipient: string;
+		script: string;
+		meta?: Record<string, unknown>;
+	}): Promise<{ callId: string; placedAt: Date }> {
+		const record: StubCallRecord = {
+			callId: randomUUID(),
+			customerId: input.customerId,
+			recipient: input.recipient,
+			script: input.script,
+			meta: input.meta,
+			placedAt: new Date(),
+		};
+		this.calls.push(record);
+		console.log(
+			`[stub-customer-channel] CALL → ${input.recipient} (${input.customerId}): ${input.script.slice(0, 80)}${input.script.length > 80 ? "…" : ""}`,
+		);
+		return { callId: record.callId, placedAt: record.placedAt };
+	}
+
+	/** Test affordance — what calls were placed. */
+	getCalls(): StubCallRecord[] {
+		return [...this.calls];
 	}
 }

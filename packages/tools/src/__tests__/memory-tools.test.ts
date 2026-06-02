@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach } from "vitest";
 import { InMemoryStore } from "@cerebro-claw/memory";
-import { createMemoryTools } from "../memory-tools.js";
 import type { ToolDefinition } from "@cerebro-claw/shared";
+import { beforeEach, describe, expect, it } from "vitest";
+import { createMemoryTools } from "../memory-tools.js";
 
 describe("memory tools", () => {
 	let store: InMemoryStore;

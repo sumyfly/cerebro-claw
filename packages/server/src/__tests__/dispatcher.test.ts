@@ -1,12 +1,9 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import { InMemoryActionLedger, StubCustomerChannel } from "@cerebro-claw/memory";
-import { NotifyThenActDispatcher } from "../dispatcher.js";
-
-// InMemoryActionLedger lives in @cerebro-claw/memory, StubCustomerChannel in
-// @cerebro-claw/tools. Vitest hoists imports but the test file is a unit so
-// we resolve the right packages here explicitly.
-import { StubCustomerChannel as Stub } from "@cerebro-claw/tools";
+import { InMemoryActionLedger } from "@cerebro-claw/memory";
 import type { ActionLedger, CustomerChannel } from "@cerebro-claw/shared";
+// StubCustomerChannel lives in @cerebro-claw/tools; the ledger in @cerebro-claw/memory.
+import { StubCustomerChannel as Stub } from "@cerebro-claw/tools";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { NotifyThenActDispatcher } from "../dispatcher.js";
 
 describe("NotifyThenActDispatcher", () => {
 	let ledger: ActionLedger;
@@ -141,6 +138,28 @@ describe("NotifyThenActDispatcher", () => {
 		expect(sendCalls).toBe(1);
 		const dispatched = r1.dispatched + r2.dispatched;
 		expect(dispatched).toBe(1);
+	});
+
+	it("dispatches a call-channel entry via channel.call()", async () => {
+		const stub = new Stub();
+		await ledger.record({
+			band: "notify-then-act",
+			customerId: "c1",
+			summary: "renewal call",
+			reason: "renewal in 20 days",
+			status: "in-flight",
+			executeAt: new Date("2026-05-29T11:00:00Z"),
+			payload: { recipient: "+15551234567", text: "Hi", channel: "call" },
+		});
+		const d = new NotifyThenActDispatcher({
+			ledger,
+			customerChannel: stub,
+			now: () => now,
+		});
+		const res = await d.tick();
+		expect(res.dispatched).toBe(1);
+		expect(stub.getCalls()).toHaveLength(1);
+		expect(stub.getSent()).toHaveLength(0);
 	});
 
 	it("onDispatch hook fires for each entry", async () => {

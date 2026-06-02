@@ -1,12 +1,7 @@
+import { ApiOutlined, BellOutlined, DashboardOutlined, TeamOutlined } from "@ant-design/icons";
 import { Layout, Menu } from "antd";
-import {
-	DashboardOutlined,
-	TeamOutlined,
-	BellOutlined,
-	ApiOutlined,
-} from "@ant-design/icons";
-import { useNavigate, useLocation } from "react-router-dom";
 import type { ReactNode } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 
 const { Header, Sider, Content } = Layout;
 

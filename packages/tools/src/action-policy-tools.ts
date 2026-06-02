@@ -17,6 +17,10 @@ import type {
  * - defaultPauseMinutes: pause window for notify-then-act when the agent
  *   didn't pick one. 240min (4h) per work-inventory.md.
  * - now: clock — injectable for tests.
+ * - resolveOverride: per-customer/per-CSM rule lookup. If it returns a band,
+ *   that band is the ENFORCED minimum for the customer — act/notify/prep are
+ *   refused and the agent is told to use the required band. This is the hard
+ *   gate that makes overrides real, not just prompt guidance.
  */
 export interface ActionPolicyToolsContext {
 	ledger: ActionLedger;
@@ -25,7 +29,18 @@ export interface ActionPolicyToolsContext {
 	defaultCsmRecipientId?: string;
 	defaultPauseMinutes?: number;
 	now?: () => Date;
+	resolveOverride?: (
+		customerId: string,
+	) => Promise<{ forcesBand?: string } | null> | { forcesBand?: string } | null;
 }
+
+/** Band severity, low → high. An override forcing a higher band blocks lower ones. */
+const BAND_SEVERITY: Record<string, number> = {
+	act: 0,
+	prep: 1,
+	"notify-then-act": 2,
+	escalate: 3,
+};
 
 const BAND_LABEL: Record<string, string> = {
 	act: "Act",
@@ -47,6 +62,24 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 		return explicit ?? ctx.defaultCsmRecipientId ?? "stub-csm";
 	}
 
+	/**
+	 * Hard override gate. If the customer has an override forcing a band stricter
+	 * than `attemptedBand`, refuse the action and tell the agent to use the
+	 * required band. Returns a refusal ToolResult, or null when allowed.
+	 */
+	async function overrideBlock(customerId: string, attemptedBand: string) {
+		if (!ctx.resolveOverride) return null;
+		const override = await ctx.resolveOverride(customerId);
+		const forced = override?.forcesBand;
+		if (!forced) return null;
+		if ((BAND_SEVERITY[forced] ?? 0) <= (BAND_SEVERITY[attemptedBand] ?? 0)) return null;
+		return {
+			content: `Blocked by override: account ${customerId} requires the "${forced}" band. Do not use ${BAND_LABEL[attemptedBand] ?? attemptedBand} here — call ${forced === "escalate" ? "escalate (with situation + options + recommendation)" : `\`${forced}\``} instead.`,
+			success: false,
+			details: { blockedBy: "override", requiredBand: forced, attemptedBand },
+		};
+	}
+
 	const act: ToolDefinition = {
 		name: "act",
 		description:
@@ -54,14 +87,22 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 		parameters: {
 			type: "object",
 			properties: {
-				customer_id: { type: "string", description: "Customer this action relates to (CSP business id)" },
+				customer_id: {
+					type: "string",
+					description: "Customer this action relates to (CSP business id)",
+				},
 				customer_name: { type: "string", description: "Customer name for the digest line" },
 				summary: { type: "string", description: "One-line description of what you just did" },
-				reason: { type: "string", description: "Why this action was warranted (signal + judgment)" },
+				reason: {
+					type: "string",
+					description: "Why this action was warranted (signal + judgment)",
+				},
 			},
 			required: ["customer_id", "summary", "reason"],
 		},
 		async execute(params) {
+			const blocked = await overrideBlock(params.customer_id as string, "act");
+			if (blocked) return blocked;
 			const ts = now();
 			const entry = await ctx.ledger.record({
 				band: "act",
@@ -95,13 +136,19 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 					description: "How to reach the customer (email, phone, contact id, etc.)",
 				},
 				text: { type: "string", description: "The message to send to the customer" },
+				channel: {
+					type: "string",
+					description: "How to reach the customer: 'message' (default) or 'call'.",
+					enum: ["message", "call"],
+				},
 				reason: {
 					type: "string",
 					description: "Why you're sending this — shown to the CSM in the heads-up",
 				},
 				pause_minutes: {
 					type: "number",
-					description: "Minutes the CSM has to cancel before the send dispatches (default 240, max 1440)",
+					description:
+						"Minutes the CSM has to cancel before the send dispatches (default 240, max 1440)",
 				},
 				csm_recipient_id: {
 					type: "string",
@@ -111,11 +158,18 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 			required: ["customer_id", "recipient", "text", "reason"],
 		},
 		async execute(params) {
+			const blocked = await overrideBlock(params.customer_id as string, "notify-then-act");
+			if (blocked) return blocked;
 			const customerName = (params.customer_name as string) ?? (params.customer_id as string);
 			const rawPause = params.pause_minutes as number | undefined;
 			const pauseMin = Math.min(
 				1440,
-				Math.max(1, Number.isFinite(rawPause) && rawPause! > 0 ? (rawPause as number) : defaultPauseMinutes),
+				Math.max(
+					1,
+					Number.isFinite(rawPause) && (rawPause as number) > 0
+						? (rawPause as number)
+						: defaultPauseMinutes,
+				),
 			);
 			const created = now();
 			const executeAt = new Date(created.getTime() + pauseMin * 60_000);
@@ -132,6 +186,7 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 				payload: {
 					recipient: params.recipient,
 					text: params.text,
+					channel: (params.channel as string) === "call" ? "call" : "message",
 				},
 			});
 
@@ -249,11 +304,15 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 		parameters: {
 			type: "object",
 			properties: {
-				customer_id: { type: "string", description: "Customer (CSP business id), or 'portfolio' for cross-customer briefs" },
+				customer_id: {
+					type: "string",
+					description: "Customer (CSP business id), or 'portfolio' for cross-customer briefs",
+				},
 				customer_name: { type: "string", description: "Customer name (or 'Portfolio')" },
 				artifact_type: {
 					type: "string",
-					description: "What you prepared (pre-call brief, renewal brief, QBR deck, weekly status, handoff brief)",
+					description:
+						"What you prepared (pre-call brief, renewal brief, QBR deck, weekly status, handoff brief)",
 				},
 				body: { type: "string", description: "The finished artifact, formatted for the channel" },
 				csm_recipient_id: {
@@ -264,6 +323,10 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 			required: ["customer_id", "artifact_type", "body"],
 		},
 		async execute(params) {
+			// No override gate: prep produces a CSM-facing artifact (a brief/deck the
+			// CSM uses), not a customer touch or an autonomous account action — an
+			// "escalate/notify everything" override is about reaching the customer,
+			// and prepping material for the CSM only helps them own that decision.
 			const customerName = (params.customer_name as string) ?? (params.customer_id as string);
 			const ts = now();
 			const entry = await ctx.ledger.record({
@@ -367,7 +430,10 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 				return { content: `Action ${id} is not an escalation.`, success: false };
 			}
 			if (existing.status !== "needs-csm") {
-				return { content: `Escalation #${id.slice(0, 8)} is already ${existing.status}.`, success: false };
+				return {
+					content: `Escalation #${id.slice(0, 8)} is already ${existing.status}.`,
+					success: false,
+				};
 			}
 			const updated = await ctx.ledger.update(id, {
 				status: "resolved",

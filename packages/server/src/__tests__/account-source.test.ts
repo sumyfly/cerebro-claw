@@ -1,9 +1,6 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { InMemoryStore } from "@cerebro-claw/memory";
-import {
-	createCspAccountSource,
-	createLocalAccountSource,
-} from "../brain-loop.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createCspAccountSource, createLocalAccountSource } from "../brain-loop.js";
 
 describe("createLocalAccountSource", () => {
 	it("lists profiles from the store", async () => {
@@ -132,12 +129,10 @@ describe("createCspAccountSource", () => {
 		const summary = await src.buildSummary("biz-id-123", "Acme");
 		expect(summary).toContain("Acme");
 		expect(summary).toContain("biz-id-123");
+		// The pointer steers the agent to fetch live detail. The band menu is no
+		// longer embedded here — the caller (evaluateCustomer / a runner's user
+		// message) appends BAND_GUIDANCE once, so it's never listed twice.
 		expect(summary).toContain("csp_get_account");
 		expect(summary).toContain("csp_get_health_score");
-		// Action-policy bands must be on the menu so the agent picks one.
-		expect(summary).toMatch(/\bact\b/);
-		expect(summary).toContain("notify_then_send_to_customer");
-		expect(summary).toContain("escalate");
-		expect(summary).toContain("prep");
 	});
 });

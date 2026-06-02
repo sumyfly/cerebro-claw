@@ -8,6 +8,10 @@ export interface ActionPolicyExtensionOptions {
 	host: ExtensionHost;
 	defaultCsmRecipientId?: string;
 	defaultPauseMinutes?: number;
+	/** Per-customer override lookup, enforced as a hard gate by the tools. */
+	resolveOverride?: (
+		customerId: string,
+	) => Promise<{ forcesBand?: string } | null> | { forcesBand?: string } | null;
 }
 
 /**
@@ -27,6 +31,7 @@ export function createActionPolicyExtension(opts: ActionPolicyExtensionOptions):
 				customerChannel: opts.customerChannel,
 				defaultCsmRecipientId: opts.defaultCsmRecipientId,
 				defaultPauseMinutes: opts.defaultPauseMinutes,
+				resolveOverride: opts.resolveOverride,
 				async sendToCsm(recipientId, text) {
 					const sender = opts.host.getChannelSender();
 					if (sender && recipientId !== "stub-csm") {

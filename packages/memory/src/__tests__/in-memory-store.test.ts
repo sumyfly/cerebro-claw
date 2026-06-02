@@ -1,11 +1,11 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import { InMemoryStore } from "../in-memory-store.js";
 import type {
 	CustomerProfile,
 	CustomerState,
 	HistoryEntry,
 	InstinctEntry,
 } from "@cerebro-claw/shared";
+import { beforeEach, describe, expect, it } from "vitest";
+import { InMemoryStore } from "../in-memory-store.js";
 
 function makeProfile(id: string): CustomerProfile {
 	return {
@@ -175,5 +175,29 @@ describe("InMemoryStore", () => {
 			expect(results).toHaveLength(1);
 			expect(results[0].id).toBe("i1");
 		});
+	});
+});
+
+describe("InMemoryStore decision memory", () => {
+	it("returns null before any decision and round-trips a recorded one", async () => {
+		const store = new InMemoryStore();
+		expect(await store.getLastDecision("c1")).toBeNull();
+		const ts = new Date("2026-06-02T00:00:00Z");
+		await store.recordDecision({ customerId: "c1", signalFingerprint: "fp-1", band: "act", ts });
+		const got = await store.getLastDecision("c1");
+		expect(got).toMatchObject({ customerId: "c1", signalFingerprint: "fp-1", band: "act" });
+	});
+
+	it("keeps only the latest decision per customer", async () => {
+		const store = new InMemoryStore();
+		const ts = new Date("2026-06-02T00:00:00Z");
+		await store.recordDecision({ customerId: "c1", signalFingerprint: "fp-1", band: "act", ts });
+		await store.recordDecision({
+			customerId: "c1",
+			signalFingerprint: "fp-2",
+			band: "escalate",
+			ts,
+		});
+		expect((await store.getLastDecision("c1"))?.signalFingerprint).toBe("fp-2");
 	});
 });

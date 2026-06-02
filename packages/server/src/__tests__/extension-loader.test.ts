@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadExtensionsFromDir } from "../extension-loader.js";
 
 describe("loadExtensionsFromDir", () => {
@@ -63,10 +63,7 @@ describe("loadExtensionsFromDir", () => {
 
 	it("isolates extension load errors", async () => {
 		writeFileSync(join(tmpDir, "broken.mjs"), `throw new Error("boom");`);
-		writeFileSync(
-			join(tmpDir, "good.mjs"),
-			`export default { id: "good", factory: () => {} };`,
-		);
+		writeFileSync(join(tmpDir, "good.mjs"), `export default { id: "good", factory: () => {} };`);
 		const exts = await loadExtensionsFromDir(tmpDir);
 		expect(exts).toHaveLength(1);
 		expect(exts[0].id).toBe("good");

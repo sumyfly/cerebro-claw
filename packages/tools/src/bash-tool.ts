@@ -80,10 +80,30 @@ interface RunOptions {
 
 function runCommand(command: string, opts: RunOptions): Promise<ToolResult> {
 	return new Promise((resolve) => {
+		// detached: true puts the command in its own process GROUP, so we can kill
+		// the whole tree on timeout. Without this, `sh -c "sleep 5"` forks a `sleep`
+		// grandchild that keeps the stdout pipe open after sh is signalled, so the
+		// `close` event (and thus this promise) hangs until sleep finishes — the
+		// timeout fails to actually terminate the work (flaky on Linux/CI).
 		const child = spawn("sh", ["-c", command], {
 			cwd: opts.cwd,
 			env: opts.env,
+			detached: true,
 		});
+
+		// Signal the whole process group (negative pid). Falls back to the single
+		// child if the group send fails (e.g. process already gone).
+		const killGroup = (sig: NodeJS.Signals) => {
+			try {
+				if (child.pid) process.kill(-child.pid, sig);
+			} catch {
+				try {
+					child.kill(sig);
+				} catch {
+					/* already exited */
+				}
+			}
+		};
 
 		let stdout = "";
 		let stderr = "";
@@ -112,8 +132,8 @@ function runCommand(command: string, opts: RunOptions): Promise<ToolResult> {
 		child.stderr.on("data", (c) => append("err", c));
 
 		const timer = setTimeout(() => {
-			child.kill("SIGTERM");
-			setTimeout(() => child.kill("SIGKILL"), 1000);
+			killGroup("SIGTERM");
+			setTimeout(() => killGroup("SIGKILL"), 1000);
 		}, opts.timeoutMs);
 
 		child.on("error", (err) => {

@@ -1,5 +1,3 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import { ExtensionHost } from "../extension-host.js";
 import { InMemoryStore } from "@cerebro-claw/memory";
 import type {
 	ChannelAdapter,
@@ -7,6 +5,8 @@ import type {
 	Extension,
 	ToolDefinition,
 } from "@cerebro-claw/shared";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ExtensionHost } from "../extension-host.js";
 
 function makeStore() {
 	return new InMemoryStore();
@@ -69,17 +69,13 @@ describe("ExtensionHost", () => {
 	});
 
 	it("getChannel finds by type", async () => {
-		await host.load([
-			{ id: "lark", factory: (api) => api.registerChannel(makeChannel("lark")) },
-		]);
+		await host.load([{ id: "lark", factory: (api) => api.registerChannel(makeChannel("lark")) }]);
 		expect(host.getChannel("lark")?.type).toBe("lark");
 		expect(host.getChannel("missing")).toBeNull();
 	});
 
 	it("getChannelSender uses fallback when no type specified", async () => {
-		await host.load([
-			{ id: "lark", factory: (api) => api.registerChannel(makeChannel("lark")) },
-		]);
+		await host.load([{ id: "lark", factory: (api) => api.registerChannel(makeChannel("lark")) }]);
 		const sender = host.getChannelSender();
 		expect(sender).not.toBeNull();
 		await sender!.send("user-1", "hi");
@@ -91,9 +87,7 @@ describe("ExtensionHost", () => {
 
 	it("emit fires registered event handlers", async () => {
 		const handler = vi.fn();
-		await host.load([
-			{ id: "t", factory: (api) => api.on("brain_loop_cycle_start", handler) },
-		]);
+		await host.load([{ id: "t", factory: (api) => api.on("brain_loop_cycle_start", handler) }]);
 		await host.emit("brain_loop_cycle_start", { ts: 1 });
 		expect(handler).toHaveBeenCalledWith({ ts: 1 });
 	});

@@ -72,9 +72,7 @@ export class NotifyThenActDispatcher {
 				else if (outcome === "failed") failed += 1;
 			}
 			if (dispatched + failed > 0) {
-				console.log(
-					`[dispatcher] Tick: ${dispatched} executed, ${failed} failed`,
-				);
+				console.log(`[dispatcher] Tick: ${dispatched} executed, ${failed} failed`);
 			}
 		} catch (err) {
 			console.error("[dispatcher] Tick error:", err);
@@ -85,8 +83,13 @@ export class NotifyThenActDispatcher {
 	}
 
 	private async dispatchOne(entry: ActionLedgerEntry): Promise<"executed" | "failed" | "skipped"> {
-		const payload = entry.payload as { recipient?: string; text?: string } | undefined;
-		if (!payload?.recipient || !payload.text) {
+		const payload = entry.payload as
+			| { recipient?: string; text?: string; channel?: string }
+			| undefined;
+		// The customer-facing copy lives in `text` — used as message body for a
+		// send and as the script for a call.
+		const body = payload?.text;
+		if (!payload?.recipient || !body) {
 			await this.ledger.update(entry.id, {
 				status: "failed",
 				note: "payload missing recipient or text",
@@ -95,16 +98,28 @@ export class NotifyThenActDispatcher {
 			return "failed";
 		}
 		try {
-			const result = await this.channel.send({
-				customerId: entry.customerId,
-				recipient: payload.recipient,
-				text: payload.text,
-				meta: { actionId: entry.id, customerName: entry.customerName },
-			});
+			const meta = { actionId: entry.id, customerName: entry.customerName };
+			const wantsCall = payload.channel === "call" && typeof this.channel.call === "function";
+			const result = wantsCall
+				? // biome-ignore lint/style/noNonNullAssertion: guarded by typeof check above
+					await this.channel.call!({
+						customerId: entry.customerId,
+						recipient: payload.recipient,
+						script: body,
+						meta,
+					})
+				: await this.channel.send({
+						customerId: entry.customerId,
+						recipient: payload.recipient,
+						text: body,
+						meta,
+					});
+			const messageId = "messageId" in result ? result.messageId : result.callId;
+			const deliveredAt = "deliveredAt" in result ? result.deliveredAt : result.placedAt;
 			await this.ledger.update(entry.id, {
 				status: "executed",
-				executedAt: result.deliveredAt,
-				payload: { ...payload, messageId: result.messageId },
+				executedAt: deliveredAt,
+				payload: { ...payload, messageId },
 			});
 			this.onDispatch?.(entry, "executed");
 			return "executed";

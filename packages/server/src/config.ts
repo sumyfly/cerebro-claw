@@ -27,7 +27,10 @@ export interface ServerConfig {
 export function loadConfig(): ServerConfig {
 	const allowlistEnv = process.env.BASH_ALLOWLIST;
 	const bashAllowlist = allowlistEnv
-		? allowlistEnv.split(",").map((s) => s.trim()).filter(Boolean)
+		? allowlistEnv
+				.split(",")
+				.map((s) => s.trim())
+				.filter(Boolean)
 		: DEFAULT_ALLOWLIST;
 
 	return {
@@ -43,7 +46,7 @@ export function loadConfig(): ServerConfig {
 		extensionsDir: process.env.EXTENSIONS_DIR ?? join(process.cwd(), "extensions"),
 		adminToken: process.env.ADMIN_TOKEN ?? "",
 		larkVerificationToken: process.env.LARK_VERIFICATION_TOKEN ?? "",
-		runtime: (process.env.RUNTIME === "claude-code" ? "claude-code" : "anthropic"),
+		runtime: process.env.RUNTIME === "claude-code" ? "claude-code" : "anthropic",
 		claudeBinary: process.env.CLAUDE_BINARY ?? "claude",
 		defaultCsmLarkUserId: process.env.DEFAULT_CSM_LARK_USER_ID ?? "",
 		dispatcherIntervalMs: Number(process.env.DISPATCHER_INTERVAL_MS ?? 60_000),

@@ -1,4 +1,18 @@
-import { Card, Descriptions, List, Table, Tag, Typography, Input, Button, Space, Modal, Form, Timeline, Tabs } from "antd";
+import {
+	Button,
+	Card,
+	Descriptions,
+	Form,
+	Input,
+	List,
+	Modal,
+	Space,
+	Table,
+	Tabs,
+	Tag,
+	Timeline,
+	Typography,
+} from "antd";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
@@ -95,7 +109,10 @@ export function Customers() {
 			const data = await res.json();
 			setChatHistory((h) => [...h, { role: "assistant", text: data.text }]);
 		} catch {
-			setChatHistory((h) => [...h, { role: "assistant", text: "Error: Could not reach the agent. Is ANTHROPIC_API_KEY set?" }]);
+			setChatHistory((h) => [
+				...h,
+				{ role: "assistant", text: "Error: Could not reach the agent. Is ANTHROPIC_API_KEY set?" },
+			]);
 		}
 		setChatLoading(false);
 	}
@@ -127,6 +144,7 @@ export function Customers() {
 			dataIndex: ["profile", "companyName"],
 			key: "name",
 			render: (name: string, r: CustomerSummary) => (
+				// biome-ignore lint/a11y/useValidAnchor: antd table cell click-to-select, not a navigation link
 				<a onClick={() => selectCustomer(r.profile.id)}>{name}</a>
 			),
 		},
@@ -286,6 +304,7 @@ export function Customers() {
 								<div style={{ maxHeight: 300, overflowY: "auto", marginBottom: 12 }}>
 									{chatHistory.map((msg, i) => (
 										<div
+											// biome-ignore lint/suspicious/noArrayIndexKey: append-only chat log, index is stable
 											key={i}
 											style={{
 												padding: "8px 12px",
@@ -370,5 +389,9 @@ function Row({ gutter, children }: { gutter: number; children: React.ReactNode }
 }
 
 function Col({ span, children }: { span: number; children: React.ReactNode }) {
-	return <div style={{ flex: `0 0 ${(span / 24) * 100}%`, maxWidth: `${(span / 24) * 100}%` }}>{children}</div>;
+	return (
+		<div style={{ flex: `0 0 ${(span / 24) * 100}%`, maxWidth: `${(span / 24) * 100}%` }}>
+			{children}
+		</div>
+	);
 }

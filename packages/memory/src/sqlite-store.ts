@@ -1,11 +1,12 @@
-import Database from "better-sqlite3";
 import type {
 	CustomerProfile,
 	CustomerState,
+	DecisionRecord,
 	HistoryEntry,
 	InstinctEntry,
 	MemoryStore,
 } from "@cerebro-claw/shared";
+import Database from "better-sqlite3";
 
 export class SqliteStore implements MemoryStore {
 	private db: Database.Database;
@@ -46,21 +47,35 @@ export class SqliteStore implements MemoryStore {
 				created_at TEXT NOT NULL
 			);
 			CREATE INDEX IF NOT EXISTS idx_instincts_customer ON instincts(customer_id);
+			CREATE TABLE IF NOT EXISTS decisions (
+				customer_id TEXT PRIMARY KEY,
+				signal_fingerprint TEXT NOT NULL,
+				band TEXT NOT NULL,
+				reason TEXT,
+				ts TEXT NOT NULL,
+				health_score REAL
+			);
 		`);
+		// Migrate older dbs that predate the health_score column.
+		try {
+			this.db.exec("ALTER TABLE decisions ADD COLUMN health_score REAL");
+		} catch {
+			// Column already exists — fine.
+		}
 	}
 
 	async getProfile(customerId: string): Promise<CustomerProfile | null> {
-		const row = this.db
-			.prepare("SELECT data FROM profiles WHERE id = ?")
-			.get(customerId) as { data: string } | undefined;
+		const row = this.db.prepare("SELECT data FROM profiles WHERE id = ?").get(customerId) as
+			| { data: string }
+			| undefined;
 		if (!row) return null;
 		return this.parseProfile(row.data);
 	}
 
 	async listProfiles(): Promise<CustomerProfile[]> {
-		const rows = this.db
-			.prepare("SELECT data FROM profiles ORDER BY created_at")
-			.all() as { data: string }[];
+		const rows = this.db.prepare("SELECT data FROM profiles ORDER BY created_at").all() as {
+			data: string;
+		}[];
 		return rows.map((r) => this.parseProfile(r.data));
 	}
 
@@ -78,18 +93,16 @@ export class SqliteStore implements MemoryStore {
 	}
 
 	async getState(customerId: string): Promise<CustomerState | null> {
-		const row = this.db
-			.prepare("SELECT data FROM states WHERE customer_id = ?")
-			.get(customerId) as { data: string } | undefined;
+		const row = this.db.prepare("SELECT data FROM states WHERE customer_id = ?").get(customerId) as
+			| { data: string }
+			| undefined;
 		if (!row) return null;
 		return this.parseState(row.data);
 	}
 
 	async updateState(state: CustomerState): Promise<void> {
 		this.db
-			.prepare(
-				"INSERT OR REPLACE INTO states (customer_id, data, updated_at) VALUES (?, ?, ?)",
-			)
+			.prepare("INSERT OR REPLACE INTO states (customer_id, data, updated_at) VALUES (?, ?, ?)")
 			.run(state.customerId, JSON.stringify(state), state.updatedAt.toISOString());
 	}
 
@@ -110,9 +123,7 @@ export class SqliteStore implements MemoryStore {
 
 	async getHistory(customerId: string, limit = 50): Promise<HistoryEntry[]> {
 		const rows = this.db
-			.prepare(
-				"SELECT * FROM history WHERE customer_id = ? ORDER BY timestamp DESC LIMIT ?",
-			)
+			.prepare("SELECT * FROM history WHERE customer_id = ? ORDER BY timestamp DESC LIMIT ?")
 			.all(customerId, limit) as {
 			id: string;
 			customer_id: string;
@@ -121,16 +132,14 @@ export class SqliteStore implements MemoryStore {
 			details: string | null;
 			timestamp: string;
 		}[];
-		return rows
-			.reverse()
-			.map((r) => ({
-				id: r.id,
-				customerId: r.customer_id,
-				type: r.type as HistoryEntry["type"],
-				summary: r.summary,
-				details: r.details ?? undefined,
-				timestamp: new Date(r.timestamp),
-			}));
+		return rows.reverse().map((r) => ({
+			id: r.id,
+			customerId: r.customer_id,
+			type: r.type as HistoryEntry["type"],
+			summary: r.summary,
+			details: r.details ?? undefined,
+			timestamp: new Date(r.timestamp),
+		}));
 	}
 
 	async searchHistory(customerId: string, query: string): Promise<HistoryEntry[]> {
@@ -204,6 +213,43 @@ export class SqliteStore implements MemoryStore {
 			source: r.source,
 			createdAt: new Date(r.created_at),
 		}));
+	}
+
+	async getLastDecision(customerId: string): Promise<DecisionRecord | null> {
+		const row = this.db.prepare("SELECT * FROM decisions WHERE customer_id = ?").get(customerId) as
+			| {
+					customer_id: string;
+					signal_fingerprint: string;
+					band: string;
+					reason: string | null;
+					ts: string;
+					health_score: number | null;
+			  }
+			| undefined;
+		if (!row) return null;
+		return {
+			customerId: row.customer_id,
+			signalFingerprint: row.signal_fingerprint,
+			band: row.band,
+			reason: row.reason ?? undefined,
+			ts: new Date(row.ts),
+			healthScore: row.health_score ?? undefined,
+		};
+	}
+
+	async recordDecision(record: DecisionRecord): Promise<void> {
+		this.db
+			.prepare(
+				"INSERT OR REPLACE INTO decisions (customer_id, signal_fingerprint, band, reason, ts, health_score) VALUES (?, ?, ?, ?, ?, ?)",
+			)
+			.run(
+				record.customerId,
+				record.signalFingerprint,
+				record.band,
+				record.reason ?? null,
+				record.ts.toISOString(),
+				record.healthScore ?? null,
+			);
 	}
 
 	close(): void {

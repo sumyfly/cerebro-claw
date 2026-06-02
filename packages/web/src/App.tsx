@@ -1,9 +1,9 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { ConfigProvider, theme } from "antd";
+import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { AppLayout } from "./components/Layout.js";
-import { Dashboard } from "./pages/Dashboard.js";
-import { Customers } from "./pages/Customers.js";
 import { Activity } from "./pages/Activity.js";
+import { Customers } from "./pages/Customers.js";
+import { Dashboard } from "./pages/Dashboard.js";
 import { Extensions } from "./pages/Extensions.js";
 
 export function App() {

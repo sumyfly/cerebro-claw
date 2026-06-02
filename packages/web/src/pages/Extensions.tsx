@@ -16,8 +16,14 @@ export function Extensions() {
 	const [diag, setDiag] = useState<Diagnostics | null>(null);
 
 	useEffect(() => {
-		fetch("/api/extensions").then((r) => r.json()).then(setInfo).catch(console.error);
-		fetch("/api/diagnostics").then((r) => r.json()).then(setDiag).catch(console.error);
+		fetch("/api/extensions")
+			.then((r) => r.json())
+			.then(setInfo)
+			.catch(console.error);
+		fetch("/api/diagnostics")
+			.then((r) => r.json())
+			.then(setDiag)
+			.catch(console.error);
 	}, []);
 
 	if (!info) return <Typography.Text>Loading…</Typography.Text>;
@@ -32,7 +38,11 @@ export function Extensions() {
 						<List
 							size="small"
 							dataSource={info.loaded}
-							renderItem={(id) => <List.Item><Tag color="blue">{id}</Tag></List.Item>}
+							renderItem={(id) => (
+								<List.Item>
+									<Tag color="blue">{id}</Tag>
+								</List.Item>
+							)}
 						/>
 					</Card>
 				</Col>
@@ -41,7 +51,11 @@ export function Extensions() {
 						<List
 							size="small"
 							dataSource={info.channels}
-							renderItem={(type) => <List.Item><Tag color="green">{type}</Tag></List.Item>}
+							renderItem={(type) => (
+								<List.Item>
+									<Tag color="green">{type}</Tag>
+								</List.Item>
+							)}
 							locale={{ emptyText: "No channels registered" }}
 						/>
 					</Card>

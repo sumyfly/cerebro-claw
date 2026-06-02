@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { createBashTool, DEFAULT_ALLOWLIST } from "../bash-tool.js";
+import { describe, expect, it } from "vitest";
+import { DEFAULT_ALLOWLIST, createBashTool } from "../bash-tool.js";
 
 describe("bash tool", () => {
 	it("executes an allowlisted command", async () => {

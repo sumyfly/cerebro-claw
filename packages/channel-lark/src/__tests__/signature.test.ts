@@ -1,9 +1,11 @@
-import { describe, it, expect } from "vitest";
 import { createHash } from "node:crypto";
+import { describe, expect, it } from "vitest";
 import { verifyLarkSignature } from "../lark-bot.js";
 
 function sign(token: string, timestamp: string, nonce: string, body: string): string {
-	return createHash("sha256").update(timestamp + nonce + token + body).digest("hex");
+	return createHash("sha256")
+		.update(timestamp + nonce + token + body)
+		.digest("hex");
 }
 
 describe("verifyLarkSignature", () => {
@@ -22,7 +24,9 @@ describe("verifyLarkSignature", () => {
 		// Flip the last char to one that's guaranteed different
 		const lastChar = sig.at(-1)!;
 		const replacement = lastChar === "f" ? "0" : "f";
-		expect(verifyLarkSignature(token, timestamp, nonce, body, sig.slice(0, -1) + replacement)).toBe(false);
+		expect(verifyLarkSignature(token, timestamp, nonce, body, sig.slice(0, -1) + replacement)).toBe(
+			false,
+		);
 	});
 
 	it("rejects when body differs", () => {

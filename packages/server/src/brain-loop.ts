@@ -1,5 +1,10 @@
-import type { MemoryStore, ExtensionEvent } from "@cerebro-claw/shared";
-import { friendlyAnthropicError, type AgentBackend } from "./agent-runtime.js";
+import type { ExtensionEvent, MemoryStore } from "@cerebro-claw/shared";
+import { type AgentBackend, friendlyAnthropicError } from "./agent-runtime.js";
+import { cspToSnapshot, deriveHealthTrend } from "./engine/csp-snapshot.js";
+import { renderDecisionContext } from "./engine/decision-context.js";
+import { parseOverrideBand } from "./engine/overrides.js";
+import { type AccountSnapshot, computeSignals } from "./engine/signals.js";
+import { BAND_GUIDANCE, reviewPointer } from "./review-prompt.js";
 
 export interface EventEmitter {
 	emit<T = unknown>(event: ExtensionEvent, payload: T): Promise<void>;
@@ -16,11 +21,19 @@ export interface AccountSource {
 	/** List the accounts to evaluate this cycle. Should be cheap. */
 	list(): Promise<{ id: string; companyName: string }[]>;
 	/**
-	 * Build the per-account context fed to the agent. Local source loads
-	 * profile/state/history/instinct from SQLite. CSP source returns a
-	 * pointer prompt that tells the agent to fetch live data via csp_* tools.
+	 * Build the per-account context fed to the agent. MUST be side-effect free —
+	 * it is called both per-cycle (evaluateCustomer) and on-demand (runDigest), so
+	 * it may run several times per account. Persisting state here would corrupt
+	 * change-detection; record that in `onEvaluated` instead.
 	 */
 	buildSummary(id: string, companyName: string): Promise<string>;
+	/**
+	 * Called once, after the agent has actually reviewed an account in a cycle.
+	 * The CSP source persists this cycle's signal fingerprint here (not in
+	 * buildSummary) so cross-cycle change-detection sees exactly one snapshot per
+	 * cycle. Optional — the local source has nothing to persist.
+	 */
+	onEvaluated?(id: string): Promise<void>;
 }
 
 /** Local store source: full context from SQLite, used in demo mode. */
@@ -73,12 +86,41 @@ export interface CspAccountSourceOptions {
 	csmEmail: string;
 	timeoutMs?: number;
 	maxAccounts?: number;
+	/** Memory store — supplies instinct notes + stored overrides for the signals. */
+	store?: MemoryStore;
+	/** Clock override (tests). */
+	now?: () => Date;
 }
 
 export function createCspAccountSource(opts: CspAccountSourceOptions): AccountSource {
 	const baseUrl = opts.baseUrl.replace(/\/$/, "");
 	const timeoutMs = opts.timeoutMs ?? 10_000;
 	const max = opts.maxAccounts ?? 25;
+
+	/** GET a CSP path, returning the parsed `.data` payload or null on any failure. */
+	async function getData(path: string): Promise<Record<string, unknown> | undefined> {
+		const ac = new AbortController();
+		const t = setTimeout(() => ac.abort(), timeoutMs);
+		try {
+			const res = await fetch(`${baseUrl}${path}`, {
+				headers: { Authorization: `Bearer ${opts.token}`, Accept: "application/json" },
+				signal: ac.signal,
+			});
+			if (!res.ok) return undefined;
+			const body = (await res.json()) as { data?: unknown };
+			return body.data && typeof body.data === "object"
+				? (body.data as Record<string, unknown>)
+				: undefined;
+		} catch {
+			return undefined;
+		} finally {
+			clearTimeout(t);
+		}
+	}
+
+	// Cache the fingerprint computed in buildSummary so onEvaluated can persist
+	// it exactly once per cycle (buildSummary itself must stay side-effect free).
+	const pendingSnapshot = new Map<string, { signalFingerprint: string; healthScore?: number }>();
 
 	return {
 		label: `CSP (${opts.csmEmail})`,
@@ -110,19 +152,71 @@ export function createCspAccountSource(opts: CspAccountSourceOptions): AccountSo
 			}
 		},
 		async buildSummary(id, companyName) {
-			return [
-				`You are about to review customer "${companyName}" (CSP business id: ${id}).`,
-				"",
-				"Fetch the live data yourself using csp_get_account, csp_get_health_score, and csp_get_engagement. Use csp_get_notes for recent context and csp_get_renewals if a renewal is close.",
-				"",
-				"Then pick the right band from the action policy:",
-				"- act — log something you noticed (CSP note, instinct).",
-				"- notify_then_send_to_customer — routine touch the customer needs (heads-up to CSM first).",
-				"- escalate — high-stakes/ambiguous call; brief the CSM with options + recommendation.",
-				"- prep — finished v1 artifact for a CSM-owned conversation.",
-				"",
-				"If nothing needs doing, just say so and move on. Don't draft and wait — that's the bug, not the feature.",
-			].join("\n");
+			const pointer = reviewPointer(companyName, id);
+
+			// Compute the decision signals server-side and inject them so the agent
+			// reasons with structured inputs (health/usage/renewal/override/change),
+			// not just raw text. Degrade gracefully to the pointer prompt on failure.
+			try {
+				const [account, health, engagement] = await Promise.all([
+					getData(`/api/v1/accounts/${id}`),
+					getData(`/api/v1/accounts/${id}/health-score`),
+					getData(`/api/v1/accounts/${id}/engagement`),
+				]);
+				const instinctEntries = opts.store ? await opts.store.getInstincts(id) : [];
+				const instincts = instinctEntries.map((i) => i.content);
+				const overrideBand = parseOverrideBand(instincts);
+				const last = opts.store ? await opts.store.getLastDecision(id) : null;
+				const now = (opts.now ?? (() => new Date()))();
+				// Map the REAL CSP shapes into the engine snapshot, then layer in
+				// agent-private memory (instincts, overrides, last decision).
+				const mapped = cspToSnapshot({ account, health, engagement }, now);
+				// Derive the health TREND from last cycle's score (CSP has no trend field).
+				const healthTrend = deriveHealthTrend(mapped.healthScore?.overallScore, last?.healthScore);
+				const snapshot: AccountSnapshot = {
+					...mapped,
+					healthScore: mapped.healthScore
+						? { ...mapped.healthScore, trend: healthTrend }
+						: mapped.healthScore,
+					instincts,
+					overrides: overrideBand ? [{ rule: "stored override", forcesBand: overrideBand }] : [],
+					lastDecision: last
+						? { signalFingerprint: last.signalFingerprint, band: last.band, reason: last.reason }
+						: undefined,
+				};
+				const signals = computeSignals(snapshot);
+				// Stash this cycle's fingerprint; onEvaluated persists it ONCE after
+				// the agent reviews. Recording here would corrupt change-detection,
+				// since buildSummary also runs from runDigest / repeat calls.
+				pendingSnapshot.set(id, {
+					signalFingerprint: signals.signalFingerprint,
+					healthScore: mapped.healthScore?.overallScore,
+				});
+				const context = renderDecisionContext(signals, instincts);
+				return `${context}\n\n${pointer}`;
+			} catch (err) {
+				console.error(
+					`[brain-loop] signal computation failed for ${companyName}: ${(err as Error).message}`,
+				);
+				return pointer;
+			}
+		},
+		async onEvaluated(id) {
+			const snap = pendingSnapshot.get(id);
+			if (!snap || !opts.store) return;
+			pendingSnapshot.delete(id);
+			const prior = await opts.store.getLastDecision(id);
+			// Record exactly one snapshot per cycle for cross-cycle change detection.
+			// Band is carried from the prior decision (informational); the fingerprint
+			// is what drives dedup. The ledger holds the band the agent actually fired.
+			await opts.store.recordDecision({
+				customerId: id,
+				signalFingerprint: snap.signalFingerprint,
+				band: prior?.band ?? "reviewed",
+				reason: "auto: brain-loop signal snapshot",
+				ts: (opts.now ?? (() => new Date()))(),
+				healthScore: snap.healthScore,
+			});
 		},
 	};
 }
@@ -234,23 +328,21 @@ Be terse. The CSM scans this in 30 seconds. If you need to take additional actio
 
 ${summary}
 
-Pick the right band from the action policy:
-- act — log something you noticed (csp_create_note for team-visible, memory_instinct for agent-private).
-- notify_then_send_to_customer — routine customer-facing touch (heads-up to CSM, dispatched after pause window).
-- escalate — high-stakes or ambiguous (brief CSM with options + recommendation).
-- prep — finished v1 artifact for a CSM-owned conversation.
+${BAND_GUIDANCE}
 
 If nothing needs doing, say "No action needed for ${companyName}." and move on.`;
 
 		try {
 			const response = await this.agent.prompt(prompt, undefined, `brain:${customerId}`);
 			if (response.toolCalls.length > 0) {
-				console.log(
-					`[brain-loop] ${companyName}: ${response.toolCalls.length} actions taken`,
-				);
+				console.log(`[brain-loop] ${companyName}: ${response.toolCalls.length} actions taken`);
 			}
 		} catch (err) {
 			console.error(`[brain-loop] Error evaluating ${companyName}: ${friendlyAnthropicError(err)}`);
+		} finally {
+			// Persist this cycle's signal snapshot exactly once, after the review —
+			// never from buildSummary (which also runs in runDigest).
+			await this.source.onEvaluated?.(customerId);
 		}
 	}
 }

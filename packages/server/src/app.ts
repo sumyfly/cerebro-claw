@@ -1,27 +1,35 @@
-import express, { type Express } from "express";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { ActionLedger, CustomerChannel, MemoryStore, PendingAction } from "@cerebro-claw/shared";
-import { SqliteActionLedger, SqliteStore } from "@cerebro-claw/memory";
-import { StubCustomerChannel } from "@cerebro-claw/tools";
-import { AgentRuntime, type AgentBackend } from "./agent-runtime.js";
-import { ClaudeCodeRuntime } from "./claude-code-runtime.js";
-import { createMcpHandler } from "./mcp-server.js";
-import { Router } from "./router.js";
-import { BrainLoop, createCspAccountSource } from "./brain-loop.js";
-import { cspReaderFromEnv, listCspSummaries, getCspDetail } from "./csp-customers.js";
-import { NotifyThenActDispatcher } from "./dispatcher.js";
-import { loadConfig } from "./config.js";
-import { ExtensionHost } from "./extension-host.js";
-import { loadExtensionsFromDir } from "./extension-loader.js";
-import { createAdminAuth } from "./auth.js";
 import { verifyLarkSignature } from "@cerebro-claw/channel-lark";
-import { errorHandler, notFoundHandler, requestLogger } from "./middleware.js";
+import { SqliteActionLedger, SqliteStore } from "@cerebro-claw/memory";
+import type {
+	ActionLedger,
+	CustomerChannel,
+	MemoryStore,
+	PendingAction,
+} from "@cerebro-claw/shared";
+import { StubCustomerChannel } from "@cerebro-claw/tools";
+import express, { type Express } from "express";
+import { createActionObserver } from "./action-observer.js";
+import { type AgentBackend, AgentRuntime } from "./agent-runtime.js";
+import { createAdminAuth } from "./auth.js";
+import { BrainLoop, createCspAccountSource } from "./brain-loop.js";
+import { createActionPolicyExtension } from "./builtin-extensions/action-policy-extension.js";
+import { createBashToolExtension } from "./builtin-extensions/bash-tool-extension.js";
 import { createLarkExtension } from "./builtin-extensions/lark-extension.js";
 import { memoryToolsExtension } from "./builtin-extensions/memory-tools-extension.js";
 import { createMessageToolsExtension } from "./builtin-extensions/message-tools-extension.js";
-import { createBashToolExtension } from "./builtin-extensions/bash-tool-extension.js";
-import { createActionPolicyExtension } from "./builtin-extensions/action-policy-extension.js";
+import { ClaudeCodeRuntime } from "./claude-code-runtime.js";
+import { loadConfig } from "./config.js";
+import { cspReaderFromEnv, getCspDetail, listCspSummaries } from "./csp-customers.js";
+import { computeDigestCounts, digestHeadline } from "./digest.js";
+import { NotifyThenActDispatcher } from "./dispatcher.js";
+import { resolveOverrideFromStore } from "./engine/overrides.js";
+import { ExtensionHost } from "./extension-host.js";
+import { loadExtensionsFromDir } from "./extension-loader.js";
+import { createMcpHandler } from "./mcp-server.js";
+import { errorHandler, notFoundHandler, requestLogger } from "./middleware.js";
+import { Router } from "./router.js";
 
 export interface AppHandles {
 	app: Express;
@@ -42,11 +50,13 @@ export async function createApp(): Promise<AppHandles> {
 	app.use(requestLogger());
 
 	// Capture raw body for webhooks (needed for signature verification)
-	app.use(express.json({
-		verify: (req, _res, buf) => {
-			(req as unknown as { rawBody: string }).rawBody = buf.toString("utf8");
-		},
-	}));
+	app.use(
+		express.json({
+			verify: (req, _res, buf) => {
+				(req as unknown as { rawBody: string }).rawBody = buf.toString("utf8");
+			},
+		}),
+	);
 
 	// Admin auth — must come before API routes
 	app.use(createAdminAuth(config.adminToken));
@@ -123,6 +133,9 @@ export async function createApp(): Promise<AppHandles> {
 			host,
 			defaultCsmRecipientId: config.defaultCsmLarkUserId || undefined,
 			defaultPauseMinutes: config.defaultPauseMinutes,
+			// Enforce stored overrides as a hard gate (overrides are taught by the
+			// CSM as instinct notes; resolveOverrideFromStore parses them).
+			resolveOverride: (customerId) => resolveOverrideFromStore(store, customerId),
 		}),
 		createBashToolExtension({
 			allowlist: config.bashAllowlist,
@@ -135,7 +148,14 @@ export async function createApp(): Promise<AppHandles> {
 	// MCP endpoint — exposes our tools to any external MCP client (Claude Code
 	// subprocess, Cursor, etc.). The Claude Code runtime uses this to call our
 	// tools without an Anthropic API key.
-	app.post("/mcp", createMcpHandler({ tools: () => host.getTools() }));
+	app.post(
+		"/mcp",
+		createMcpHandler({
+			tools: () => host.getTools(),
+			// Keep the ledger honest when the agent logs a CSP note without `act`.
+			onToolCall: createActionObserver(ledger),
+		}),
+	);
 
 	// Agent runtime — Anthropic SDK (default) or Claude Code subprocess
 	const mcpUrl = `http://127.0.0.1:${config.port}/mcp`;
@@ -147,8 +167,7 @@ export async function createApp(): Promise<AppHandles> {
 
 	// Router and brain loop (brain loop emits lifecycle events through the host)
 	const router = new Router(agent, { store });
-	const brainLoopEnabled =
-		config.runtime === "claude-code" ? true : !!config.anthropicApiKey;
+	const brainLoopEnabled = config.runtime === "claude-code" ? true : !!config.anthropicApiKey;
 
 	// Pick account source: CSP (live) when CSP_TOKEN + CSP_CSM_EMAIL are configured,
 	// otherwise fall back to the local SQLite store (demo / seed mode).
@@ -161,6 +180,7 @@ export async function createApp(): Promise<AppHandles> {
 					maxAccounts: process.env.CSP_MAX_ACCOUNTS
 						? Number(process.env.CSP_MAX_ACCOUNTS)
 						: undefined,
+					store,
 				})
 			: undefined;
 
@@ -204,7 +224,9 @@ export async function createApp(): Promise<AppHandles> {
 
 				// URL verification challenges arrive before signing is set up
 				if (req.body.type !== "url_verification") {
-					if (!verifyLarkSignature(config.larkVerificationToken, timestamp, nonce, rawBody, signature)) {
+					if (
+						!verifyLarkSignature(config.larkVerificationToken, timestamp, nonce, rawBody, signature)
+					) {
 						res.status(401).json({ error: "Invalid signature" });
 						return;
 					}
@@ -351,28 +373,9 @@ export async function createApp(): Promise<AppHandles> {
 
 	// "Yesterday: 47 acts, 12 notifies in-flight, 2 escalations need you."
 	app.get("/api/digest/counters", async (req, res) => {
-		const now = new Date();
 		const windowHours = Number(req.query.hours ?? 24);
-		const since = new Date(now.getTime() - windowHours * 3600 * 1000);
-		const recent = await ledger.listByWindow(since, now);
-		const open = await ledger.listOpen();
-		const counts = {
-			windowHours,
-			acts: recent.filter((e) => e.band === "act").length,
-			notifies: {
-				inFlight: open.filter((e) => e.band === "notify-then-act").length,
-				executed: recent.filter((e) => e.band === "notify-then-act" && e.status === "executed").length,
-				cancelled: recent.filter((e) => e.band === "notify-then-act" && e.status === "cancelled").length,
-				failed: recent.filter((e) => e.band === "notify-then-act" && e.status === "failed").length,
-			},
-			escalations: {
-				needsCsm: open.filter((e) => e.band === "escalate").length,
-				resolved: recent.filter((e) => e.band === "escalate" && e.status === "resolved").length,
-			},
-			preps: recent.filter((e) => e.band === "prep").length,
-		};
-		const headline = `Yesterday: ${counts.acts} acts, ${counts.notifies.inFlight} notifies in-flight, ${counts.escalations.needsCsm} escalations need you.`;
-		res.json({ headline, counts });
+		const counts = await computeDigestCounts(ledger, new Date(), windowHours);
+		res.json({ headline: digestHeadline(counts), counts });
 	});
 
 	app.post("/api/actions/:id/approve", async (req, res) => {
@@ -462,7 +465,10 @@ export async function createApp(): Promise<AppHandles> {
 		if (!config.larkAppId || !config.larkAppSecret) {
 			results.lark = { ok: false, detail: "LARK_APP_ID/SECRET not set" };
 		} else {
-			results.lark = { ok: true, detail: "credentials configured (call from Lark to fully verify)" };
+			results.lark = {
+				ok: true,
+				detail: "credentials configured (call from Lark to fully verify)",
+			};
 		}
 
 		res.json(results);

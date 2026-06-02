@@ -1,5 +1,5 @@
-import type { Extension, MemoryStore, PendingAction } from "@cerebro-claw/shared";
 import { LarkBot, buildApprovalCard } from "@cerebro-claw/channel-lark";
+import type { Extension, MemoryStore, PendingAction } from "@cerebro-claw/shared";
 
 export interface LarkExtensionOptions {
 	appId: string;

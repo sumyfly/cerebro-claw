@@ -1,6 +1,6 @@
+import type { MemoryStore } from "./memory.js";
 import type { InboundMessage } from "./message.js";
 import type { ToolDefinition } from "./tool.js";
-import type { MemoryStore } from "./memory.js";
 
 export interface ChannelAdapter {
 	/** Channel identifier — e.g. "lark", "email", "slack". */

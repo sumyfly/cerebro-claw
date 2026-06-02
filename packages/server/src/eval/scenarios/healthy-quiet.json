@@ -1,0 +1,26 @@
+{
+	"id": "healthy-quiet",
+	"description": "Healthy account, steady usage, no near renewal — agent should do nothing.",
+	"csp": {
+		"/api/v1/accounts/aaaaaaaaaaaaaaaaaaaaaaaa": {
+			"data": {
+				"id": "aaaaaaaaaaaaaaaaaaaaaaaa",
+				"name": "Quiet Co",
+				"plan": "small_annually",
+				"businessMetrics": {
+					"mrr": 500,
+					"transactionMetrics": {
+						"breakdown": { "pos_txn_count_past30days": 120, "pos_txn_count_past7days": 28 }
+					}
+				}
+			}
+		},
+		"/api/v1/accounts/aaaaaaaaaaaaaaaaaaaaaaaa/health-score": {
+			"data": { "overall": { "score": 88, "category": "EXCELLENT" } }
+		},
+		"/api/v1/accounts/aaaaaaaaaaaaaaaaaaaaaaaa/engagement": {
+			"data": [{ "last_seen": "2026-06-01T10:00:00.000Z" }]
+		}
+	},
+	"expect": { "band": "none" }
+}

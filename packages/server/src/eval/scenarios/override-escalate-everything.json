@@ -1,0 +1,31 @@
+{
+	"id": "override-escalate-everything",
+	"description": "Healthy account, but a standing override says escalate everything for it.",
+	"csp": {
+		"/api/v1/accounts/cccccccccccccccccccccccc": {
+			"data": {
+				"id": "cccccccccccccccccccccccc",
+				"name": "VIP Co",
+				"plan": "large_annually",
+				"businessMetrics": {
+					"mrr": 20000,
+					"transactionMetrics": {
+						"breakdown": { "pos_txn_count_past30days": 800, "pos_txn_count_past7days": 190 }
+					}
+				}
+			}
+		},
+		"/api/v1/accounts/cccccccccccccccccccccccc/health-score": {
+			"data": { "overall": { "score": 90, "category": "EXCELLENT" } }
+		},
+		"/api/v1/accounts/cccccccccccccccccccccccc/engagement": {
+			"data": [{ "last_seen": "2026-06-01T22:00:00.000Z" }]
+		}
+	},
+	"memory": {
+		"overrides": [
+			{ "rule": "VIP Co — escalate everything, CSM owns all touches.", "forcesBand": "escalate" }
+		]
+	},
+	"expect": { "band": "escalate", "overrideHonored": true }
+}

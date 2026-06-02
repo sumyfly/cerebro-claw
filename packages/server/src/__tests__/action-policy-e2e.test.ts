@@ -1,12 +1,12 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import request from "supertest";
-import type { Express } from "express";
-import { createApp } from "../app.js";
-import { createActionPolicyTools, StubCustomerChannel } from "@cerebro-claw/tools";
 import { InMemoryActionLedger } from "@cerebro-claw/memory";
+import { StubCustomerChannel, createActionPolicyTools } from "@cerebro-claw/tools";
+import type { Express } from "express";
+import request from "supertest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createApp } from "../app.js";
 import { NotifyThenActDispatcher } from "../dispatcher.js";
 
 /**
@@ -115,7 +115,9 @@ describe("Action policy app integration: counters update after a tool runs", () 
 	it("counters start at zero and headline matches the contract", async () => {
 		const res = await request(app).get("/api/digest/counters");
 		expect(res.status).toBe(200);
-		expect(res.body.headline).toBe("Yesterday: 0 acts, 0 notifies in-flight, 0 escalations need you.");
+		expect(res.body.headline).toBe(
+			"Yesterday: 0 acts, 0 notifies in-flight, 0 escalations need you.",
+		);
 		expect(res.body.counts.acts).toBe(0);
 		expect(res.body.counts.notifies.inFlight).toBe(0);
 		expect(res.body.counts.escalations.needsCsm).toBe(0);

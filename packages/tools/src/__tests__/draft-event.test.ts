@@ -1,6 +1,6 @@
-import { describe, it, expect, vi } from "vitest";
-import { createMessageTools } from "../message-tools.js";
 import type { PendingAction, ToolDefinition } from "@cerebro-claw/shared";
+import { describe, expect, it, vi } from "vitest";
+import { createMessageTools } from "../message-tools.js";
 
 describe("draft_message → onActionCreated", () => {
 	it("fires the hook with the created action", async () => {
