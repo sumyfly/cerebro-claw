@@ -21,6 +21,7 @@ import { createMessageToolsExtension } from "./builtin-extensions/message-tools-
 import { ClaudeCodeRuntime } from "./claude-code-runtime.js";
 import { loadConfig } from "./config.js";
 import { cspReaderFromEnv, getCspDetail, listCspSummaries } from "./csp-customers.js";
+import { computeDigestCounts, digestHeadline } from "./digest.js";
 import { NotifyThenActDispatcher } from "./dispatcher.js";
 import { resolveOverrideFromStore } from "./engine/overrides.js";
 import { ExtensionHost } from "./extension-host.js";
@@ -364,30 +365,9 @@ export async function createApp(): Promise<AppHandles> {
 
 	// "Yesterday: 47 acts, 12 notifies in-flight, 2 escalations need you."
 	app.get("/api/digest/counters", async (req, res) => {
-		const now = new Date();
 		const windowHours = Number(req.query.hours ?? 24);
-		const since = new Date(now.getTime() - windowHours * 3600 * 1000);
-		const recent = await ledger.listByWindow(since, now);
-		const open = await ledger.listOpen();
-		const counts = {
-			windowHours,
-			acts: recent.filter((e) => e.band === "act").length,
-			notifies: {
-				inFlight: open.filter((e) => e.band === "notify-then-act").length,
-				executed: recent.filter((e) => e.band === "notify-then-act" && e.status === "executed")
-					.length,
-				cancelled: recent.filter((e) => e.band === "notify-then-act" && e.status === "cancelled")
-					.length,
-				failed: recent.filter((e) => e.band === "notify-then-act" && e.status === "failed").length,
-			},
-			escalations: {
-				needsCsm: open.filter((e) => e.band === "escalate").length,
-				resolved: recent.filter((e) => e.band === "escalate" && e.status === "resolved").length,
-			},
-			preps: recent.filter((e) => e.band === "prep").length,
-		};
-		const headline = `Yesterday: ${counts.acts} acts, ${counts.notifies.inFlight} notifies in-flight, ${counts.escalations.needsCsm} escalations need you.`;
-		res.json({ headline, counts });
+		const counts = await computeDigestCounts(ledger, new Date(), windowHours);
+		res.json({ headline: digestHeadline(counts), counts });
 	});
 
 	app.post("/api/actions/:id/approve", async (req, res) => {
