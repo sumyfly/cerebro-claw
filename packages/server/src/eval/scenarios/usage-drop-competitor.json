@@ -1,15 +1,25 @@
 {
 	"id": "usage-drop-competitor",
-	"description": "Usage dropped on an account flagged evaluating a competitor — escalate.",
+	"description": "Usage dropped on an at-risk account flagged as evaluating a competitor — escalate.",
 	"csp": {
 		"/api/v1/accounts/bbbbbbbbbbbbbbbbbbbbbbbb": {
-			"data": { "id": "bbbbbbbbbbbbbbbbbbbbbbbb", "name": "Risky Co", "plan": "Enterprise" }
+			"data": {
+				"id": "bbbbbbbbbbbbbbbbbbbbbbbb",
+				"name": "Risky Co",
+				"plan": "large_annually",
+				"businessMetrics": {
+					"mrr": 6000,
+					"transactionMetrics": {
+						"breakdown": { "pos_txn_count_past30days": 400, "pos_txn_count_past7days": 25 }
+					}
+				}
+			}
 		},
 		"/api/v1/accounts/bbbbbbbbbbbbbbbbbbbbbbbb/health-score": {
-			"data": { "overallScore": 41, "grade": "D", "trend": "down" }
+			"data": { "overall": { "score": 41, "category": "AT_RISK" } }
 		},
 		"/api/v1/accounts/bbbbbbbbbbbbbbbbbbbbbbbb/engagement": {
-			"data": { "logins30d": 12, "trend": "down" }
+			"data": [{ "last_seen": "2026-05-20T10:00:00.000Z" }]
 		}
 	},
 	"memory": { "instincts": ["Risky Co is actively evaluating a competitor."] },

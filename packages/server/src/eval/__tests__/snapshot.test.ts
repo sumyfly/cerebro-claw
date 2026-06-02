@@ -9,11 +9,22 @@ const scenario: Scenario = {
 	id: "s",
 	description: "",
 	csp: {
-		[`/api/v1/accounts/${ID}`]: { data: { id: ID, name: "Risky Co", contractValue: 80000 } },
-		[`/api/v1/accounts/${ID}/health-score`]: {
-			data: { overallScore: 41, grade: "D", trend: "down" },
+		[`/api/v1/accounts/${ID}`]: {
+			data: {
+				id: ID,
+				name: "Risky Co",
+				businessMetrics: {
+					mrr: 6000,
+					transactionMetrics: {
+						breakdown: { pos_txn_count_past30days: 400, pos_txn_count_past7days: 25 },
+					},
+				},
+			},
 		},
-		[`/api/v1/accounts/${ID}/engagement`]: { data: { logins30d: 12, trend: "down" } },
+		[`/api/v1/accounts/${ID}/health-score`]: {
+			data: { overall: { score: 41, category: "AT_RISK" } },
+		},
+		[`/api/v1/accounts/${ID}/engagement`]: { data: [{ last_seen: "2026-05-20T10:00:00.000Z" }] },
 	},
 	memory: {
 		instincts: ["Evaluating a competitor."],
@@ -23,13 +34,14 @@ const scenario: Scenario = {
 };
 
 describe("snapshotFromScenario", () => {
-	it("extracts account/health/engagement + memory keyed by business id", () => {
+	it("maps real CSP shapes + memory keyed by business id", () => {
 		const built = snapshotFromScenario(scenario, NOW);
 		expect(built).not.toBeNull();
 		expect(built?.businessId).toBe(ID);
-		expect(built?.snapshot.account?.contractValue).toBe(80000);
-		expect(built?.snapshot.healthScore?.grade).toBe("D");
-		expect(built?.snapshot.engagement?.trend).toBe("down");
+		expect(built?.snapshot.account?.contractValue).toBe(72000); // mrr 6000 * 12
+		expect(built?.snapshot.healthScore?.overallScore).toBe(41);
+		expect(built?.snapshot.healthScore?.grade).toBe("AT_RISK");
+		expect(built?.snapshot.engagement?.trend).toBe("down"); // 7d=25 << weekly avg ~93
 		expect(built?.snapshot.instincts).toEqual(["Evaluating a competitor."]);
 		expect(built?.snapshot.overrides?.[0].forcesBand).toBe("escalate");
 	});

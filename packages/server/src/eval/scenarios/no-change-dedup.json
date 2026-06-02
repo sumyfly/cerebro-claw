@@ -1,20 +1,25 @@
 {
 	"id": "no-change-dedup",
-	"description": "At-risk account already handled last cycle; nothing changed — do nothing this cycle.",
+	"description": "At-risk-ish account already handled last cycle; nothing changed — do nothing this cycle.",
 	"csp": {
 		"/api/v1/accounts/eeeeeeeeeeeeeeeeeeeeeeee": {
 			"data": {
 				"id": "eeeeeeeeeeeeeeeeeeeeeeee",
 				"name": "Plateau Co",
-				"plan": "Pro",
-				"contractValue": 22000
+				"plan": "medium_annually",
+				"businessMetrics": {
+					"mrr": 1800,
+					"transactionMetrics": {
+						"breakdown": { "pos_txn_count_past30days": 120, "pos_txn_count_past7days": 28 }
+					}
+				}
 			}
 		},
 		"/api/v1/accounts/eeeeeeeeeeeeeeeeeeeeeeee/health-score": {
-			"data": { "overallScore": 60, "grade": "C", "trend": "flat" }
+			"data": { "overall": { "score": 60, "category": "MODERATE" } }
 		},
 		"/api/v1/accounts/eeeeeeeeeeeeeeeeeeeeeeee/engagement": {
-			"data": { "logins30d": 30, "trend": "flat" }
+			"data": [{ "last_seen": "2026-05-30T10:00:00.000Z" }]
 		}
 	},
 	"memory": {

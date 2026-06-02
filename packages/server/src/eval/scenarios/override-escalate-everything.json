@@ -6,15 +6,20 @@
 			"data": {
 				"id": "cccccccccccccccccccccccc",
 				"name": "VIP Co",
-				"plan": "Enterprise",
-				"contractValue": 250000
+				"plan": "large_annually",
+				"businessMetrics": {
+					"mrr": 20000,
+					"transactionMetrics": {
+						"breakdown": { "pos_txn_count_past30days": 800, "pos_txn_count_past7days": 190 }
+					}
+				}
 			}
 		},
 		"/api/v1/accounts/cccccccccccccccccccccccc/health-score": {
-			"data": { "overallScore": 90, "grade": "A", "trend": "flat" }
+			"data": { "overall": { "score": 90, "category": "EXCELLENT" } }
 		},
 		"/api/v1/accounts/cccccccccccccccccccccccc/engagement": {
-			"data": { "logins30d": 200, "trend": "up" }
+			"data": [{ "last_seen": "2026-06-01T22:00:00.000Z" }]
 		}
 	},
 	"memory": {

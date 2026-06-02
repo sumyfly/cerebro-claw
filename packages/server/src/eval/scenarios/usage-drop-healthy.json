@@ -1,20 +1,25 @@
 {
 	"id": "usage-drop-healthy",
-	"description": "Usage dipped on an otherwise healthy account, no risk flags — log and watch (act), do not escalate.",
+	"description": "Usage dropped sharply (7d run-rate well below 30d avg) on an otherwise healthy account, no risk flags — log and watch (act), do not escalate.",
 	"csp": {
 		"/api/v1/accounts/dddddddddddddddddddddddd": {
 			"data": {
 				"id": "dddddddddddddddddddddddd",
 				"name": "Steady Co",
-				"plan": "Pro",
-				"contractValue": 18000
+				"plan": "medium_annually",
+				"businessMetrics": {
+					"mrr": 1500,
+					"transactionMetrics": {
+						"breakdown": { "pos_txn_count_past30days": 400, "pos_txn_count_past7days": 35 }
+					}
+				}
 			}
 		},
 		"/api/v1/accounts/dddddddddddddddddddddddd/health-score": {
-			"data": { "overallScore": 72, "grade": "B", "trend": "down" }
+			"data": { "overall": { "score": 72, "category": "HEALTHY" } }
 		},
 		"/api/v1/accounts/dddddddddddddddddddddddd/engagement": {
-			"data": { "logins30d": 45, "trend": "down" }
+			"data": [{ "last_seen": "2026-05-31T10:00:00.000Z" }]
 		}
 	},
 	"expect": { "band": "act" }
