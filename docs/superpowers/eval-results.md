@@ -68,3 +68,27 @@ account source. Verified across multiple real-claude runs. Honest caveats:
 live-Cerebro run needs a CSP token (unavailable) — eval uses cerebro-shaped
 fixtures + real claude; claude-code reports toolCalls:[] so scores are read from
 the action ledger (ground truth).
+
+## 2026-06-02 — LIVE Cerebro run (real CSP backend + real claude)
+
+`pnpm --filter @cerebro-claw/server eval:live` against cspapi.test.shub.us as
+andrew.lee@storehub.com. This is the honest test the fixtures couldn't give:
+live testing exposed that the engine's signals were computed from a made-up flat
+shape and came back EMPTY on real data. Fixed with cspToSnapshot (maps real
+health.overall + account.businessMetrics; derives usage trend from 7d-vs-30d
+transactions). After the fix, signals populate and the agent makes sound calls:
+
+```
+16chillgrill      Health 54 / AT_RISK (merchant-volume driven, renewal 524d) -> notify-then-act
+1975toastandcoffee Health 78 / HEALTHY, renewal 7d out NOT_STARTED          -> notify-then-act
+1mcafe            Health 63 "HEALTHY" headline hiding ~19% YoY decline       -> act (logged latent-risk note)
+```
+
+The 1mcafe call is the standout: the agent saw through a healthy headline to a
+latent risk and LOGGED it (act) rather than over-escalating — real CSM nuance.
+
+Fixture battery re-run on REAL CSP shapes (deterministic) via real claude: 5/5.
+
+Honest notes: health TREND isn't exposed by CSP (left null; usage trend derived
+from transactions). Live agent actions may write a CSP note to the test backend
+(product behaving as designed). claude-code toolCalls:[] → scores from ledger.
