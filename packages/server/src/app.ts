@@ -10,6 +10,7 @@ import type {
 } from "@cerebro-claw/shared";
 import { StubCustomerChannel } from "@cerebro-claw/tools";
 import express, { type Express } from "express";
+import { createActionObserver } from "./action-observer.js";
 import { type AgentBackend, AgentRuntime } from "./agent-runtime.js";
 import { createAdminAuth } from "./auth.js";
 import { BrainLoop, createCspAccountSource } from "./brain-loop.js";
@@ -147,7 +148,14 @@ export async function createApp(): Promise<AppHandles> {
 	// MCP endpoint — exposes our tools to any external MCP client (Claude Code
 	// subprocess, Cursor, etc.). The Claude Code runtime uses this to call our
 	// tools without an Anthropic API key.
-	app.post("/mcp", createMcpHandler({ tools: () => host.getTools() }));
+	app.post(
+		"/mcp",
+		createMcpHandler({
+			tools: () => host.getTools(),
+			// Keep the ledger honest when the agent logs a CSP note without `act`.
+			onToolCall: createActionObserver(ledger),
+		}),
+	);
 
 	// Agent runtime — Anthropic SDK (default) or Claude Code subprocess
 	const mcpUrl = `http://127.0.0.1:${config.port}/mcp`;

@@ -5,6 +5,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ActionLedger, ChannelAdapter, CustomerChannel } from "@cerebro-claw/shared";
 import express from "express";
+import { createActionObserver } from "../action-observer.js";
 import { createActionPolicyExtension } from "../builtin-extensions/action-policy-extension.js";
 import { memoryToolsExtension } from "../builtin-extensions/memory-tools-extension.js";
 import { ClaudeCodeRuntime } from "../claude-code-runtime.js";
@@ -159,7 +160,13 @@ export async function buildAgentForEval(deps: EvalAgentDeps): Promise<EvalAgent>
 	// mounts at POST /mcp, same dynamic tool list.
 	const mcpApp = express();
 	mcpApp.use(express.json());
-	mcpApp.post("/mcp", createMcpHandler({ tools: () => host.getTools() }));
+	mcpApp.post(
+		"/mcp",
+		createMcpHandler({
+			tools: () => host.getTools(),
+			onToolCall: createActionObserver(deps.ledger),
+		}),
+	);
 
 	const httpServer: HttpServer = await new Promise((res) => {
 		const s = mcpApp.listen(0, "127.0.0.1", () => res(s));
