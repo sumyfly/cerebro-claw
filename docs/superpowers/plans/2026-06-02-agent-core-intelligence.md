@@ -16,24 +16,26 @@
 - [x] A3. Override enforcement — HARD GATE at the action-policy tool layer:
       act/notify/prep refused + redirected when an override forces a stricter
       band; escalate always allowed. 6 tests. (5bc091b)
-- [ ] A4. Change-detection / decision memory — persist per-account
-      {signalFingerprint, lastBand, lastReason, ts}; no-op when nothing changed;
-      feed last decision into context. Unit-tested.
+- [~] A4. Change-detection — fingerprint + "no-change → no action" guidance built
+      and PROVEN in eval (no-change-dedup passes real claude). REMAINING: persist
+      per-account decision across real production cycles (store layer) so dedup
+      fires in the live loop, not just when the eval injects lastDecision.
 
 ### B. Wire the engine into the real CSM loop over Cerebro
-- [ ] B1. A CSP-fetching account source/snapshot builder that fetches the account
-      server-side, computes signals, and injects the decision context — wiring the
-      engine into the production brain loop (not just eval).
-- [ ] B2. Override + decision-memory stores backed by SQLite (survive restarts).
+- [x] B1. createCspAccountSource fetches the snapshot server-side, computes signals,
+      and injects the decision-context ahead of the fetch pointer. (771ddb1)
+- [~] B2. Overrides: taught as instinct notes, parsed + enforced via the hard gate
+      in production (resolveOverrideFromStore). DONE. Decision-memory persistence
+      (last fingerprint per account) across cycles — REMAINING (ties to A4).
 
 ### C. Honest measurement (don't cheat)
-- [ ] C1. Fix scorer act-band blindness: count `csp_create_note`/`memory_instinct`
-      (or route the eval's "act" through the `act` tool) so `expect: act` is real.
-- [ ] C2. Expand scenario battery to >=8 incl. ambiguous (usage-drop-on-healthy →
-      act, NOT escalate), override (escalate-everything), no-change (dedup → none),
-      renewal-30d (notify/prep), discount-request (escalate).
-- [ ] C3. Run eval against REAL claude; record honest scores; iterate the engine
-      until the battery genuinely passes (no gaming, no weakening assertions to pass).
+- [x] C1. Act-band recorded via the `act` tool (prompt sharpened); `expect: act`
+      is measurable. (7e4d8b9)
+- [~] C2. Battery at 5 scenarios: healthy-quiet(none), usage-drop-healthy(act),
+      usage-drop-competitor(escalate), override-escalate-everything(escalate),
+      no-change-dedup(none). Could add renewal-window + discount; 5 cover the key
+      judgment axes (over-escalation, dedup, override, instinct-risk).
+- [x] C3. Real-claude eval 5/5, twice (after C2 and after B1) — eval-results.md.
 
 ## Verification gate for COMPLETED
 - `pnpm turbo build` green; `pnpm --filter {memory,tools,server} test` green.
