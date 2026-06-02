@@ -50,4 +50,12 @@
   transport's recorded POSTs or route act through the `act` tool.
 
 ## Log
-- iter1: branch created; plan written. Starting A1 (signals).
+- iter1: branch created; plan written.
+- A1 (signals, 10 tests), A2 (decision-context, 6 tests), A3 (override hard gate,
+  6 tests) all done + committed. Engine wired into the eval (signals→context,
+  resolveOverride→tools); snapshot extractor. Override scenario added.
+- Real-claude eval 3/3 (incl. override gate) — see eval-results.md 2026-06-02.
+- REMAINING: A4 (decision memory/change-detection persistence + no-op),
+  B1/B2 (production brain-loop wiring + SQLite override/decision stores),
+  C1 (scorer act-band visibility), C2 (ambiguous + no-change + renewal scenarios),
+  C3 (re-run real claude until the full battery genuinely passes).
