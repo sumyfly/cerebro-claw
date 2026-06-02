@@ -29,8 +29,10 @@ export interface EvalAgentDeps {
 	cspFixtures: Record<string, unknown>;
 	/** CSM instinct notes to seed into the store (agent-private memory). */
 	instincts?: string[];
-	/** Customer/business id the seeded instincts are keyed under. */
+	/** Customer/business id the seeded instincts + overrides are keyed under. */
 	customerId?: string;
+	/** Override rules for this account, enforced as a hard gate by the tools. */
+	overrides?: Array<{ rule: string; forcesBand?: string }>;
 }
 
 /** What the runner needs from the agent: one-shot prompt that drives tool calls. */
@@ -131,6 +133,13 @@ export async function buildAgentForEval(deps: EvalAgentDeps): Promise<EvalAgent>
 			// in the csmChannel inbox rather than the stderr fallback.
 			defaultCsmRecipientId: "eval-csm",
 			defaultPauseMinutes: config.defaultPauseMinutes,
+			// Enforce the scenario's override (if any) for this account, exactly as
+			// production would from the override store.
+			resolveOverride: (customerId) => {
+				if (customerId !== deps.customerId) return null;
+				const forcing = (deps.overrides ?? []).find((o) => o.forcesBand);
+				return forcing ? { forcesBand: forcing.forcesBand } : null;
+			},
 		}),
 		...cspExtensions,
 	]);

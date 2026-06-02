@@ -14,10 +14,16 @@
 import { InMemoryActionLedger } from "@cerebro-claw/memory";
 import { StubCsmChannel, StubCustomerChannel } from "@cerebro-claw/tools";
 import { loadConfig } from "../config.js";
+import { renderDecisionContext } from "../engine/decision-context.js";
+import { computeSignals } from "../engine/signals.js";
 import { buildAgentForEval } from "./harness.js";
 import { loadScenarios } from "./load-scenarios.js";
 import { scoreScenario } from "./score.js";
+import { snapshotFromScenario } from "./snapshot.js";
 import type { Scenario, ScenarioResult } from "./types.js";
+
+/** Fixed clock for the eval so renewal/contact day-math is deterministic. */
+const EVAL_NOW = new Date("2026-06-02T00:00:00Z");
 
 /**
  * Pull the first CSP business id out of the scenario's fixture keys. CSP account
@@ -85,6 +91,7 @@ async function runScenario(scenario: Scenario): Promise<ScenarioResult> {
 	await csmChannel.start(async () => null);
 
 	const instincts = scenario.memory?.instincts ?? [];
+	const overrides = scenario.memory?.overrides ?? [];
 	const agent = await buildAgentForEval({
 		ledger,
 		customerChannel,
@@ -92,17 +99,17 @@ async function runScenario(scenario: Scenario): Promise<ScenarioResult> {
 		cspFixtures: scenario.csp,
 		instincts,
 		customerId: businessId,
+		overrides,
 	});
 
-	// The instincts are seeded into the store (memory_* tools can find them) and
-	// also injected as per-account context so the agent reliably sees what the
-	// CSM has told it about this account — the band call often hinges on it.
-	const context =
-		instincts.length > 0
-			? `What the CSM has told you about this account (instinct notes):\n${instincts
-					.map((i) => `- ${i}`)
-					.join("\n")}`
-			: undefined;
+	// Compute the decision signals from the scenario's CSP data + memory and
+	// render them as the per-account context — the same engine the production
+	// loop uses. This is what gives the agent structured inputs (health/usage/
+	// renewal/override/change) instead of raw text, plus the instinct notes.
+	const built = snapshotFromScenario(scenario, EVAL_NOW);
+	const context = built
+		? renderDecisionContext(computeSignals(built.snapshot), instincts)
+		: undefined;
 
 	try {
 		await agent.prompt(reviewPrompt(businessId), context, `eval:${scenario.id}`);

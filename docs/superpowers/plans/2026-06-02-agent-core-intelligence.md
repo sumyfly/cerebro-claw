@@ -9,15 +9,13 @@
 ## Definition of done (the COMPLETED promise is only true when ALL are checked)
 
 ### A. The decision engine (intelligence in code, judgment in LLM)
-- [ ] A1. `signals.ts` — pure `computeSignals(snapshot)`: health score/grade/trend,
-      daysToRenewal, ARR/contractValue, usage trend, healthDelta vs last cycle,
-      override presence, days since last contact. Unit-tested.
-- [ ] A2. `decision-context.ts` — render a structured "Decision signals" block
-      injected into the per-account prompt (eval + production). Unit-tested.
-- [ ] A3. Override enforcement — per-customer/per-CSM rules stored in memory,
-      enforced as a HARD GATE at the action-policy tool layer (a customer-facing
-      or act action on an "escalate-everything" account is refused + redirected
-      to escalate, logged). Unit-tested.
+- [x] A1. `signals.ts` — pure `computeSignals(snapshot)`: health/usage/renewal/ARR
+      + bucketed signal fingerprint for change detection. 10 tests. (bcc8cbf)
+- [x] A2. `decision-context.ts` — render structured "Decision signals" block
+      (signals + hard override directive + change guidance + instincts). 6 tests. (fc28fc6)
+- [x] A3. Override enforcement — HARD GATE at the action-policy tool layer:
+      act/notify/prep refused + redirected when an override forces a stricter
+      band; escalate always allowed. 6 tests. (5bc091b)
 - [ ] A4. Change-detection / decision memory — persist per-account
       {signalFingerprint, lastBand, lastReason, ts}; no-op when nothing changed;
       feed last decision into context. Unit-tested.
