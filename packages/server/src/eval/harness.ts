@@ -33,6 +33,12 @@ export interface EvalAgentDeps {
 	customerId?: string;
 	/** Override rules for this account, enforced as a hard gate by the tools. */
 	overrides?: Array<{ rule: string; forcesBand?: string }>;
+	/**
+	 * Live mode: do NOT mock CSP. The csp-connector hits the real CSP backend
+	 * using CSP_TOKEN/CSP_BASE_URL from process.env. Used to test the agent
+	 * against live Cerebro data instead of fixtures.
+	 */
+	live?: boolean;
 }
 
 /** What the runner needs from the agent: one-shot prompt that drives tool calls. */
@@ -57,9 +63,14 @@ export async function buildAgentForEval(deps: EvalAgentDeps): Promise<EvalAgent>
 	const config = loadConfig();
 
 	// The csp-connector's makeTransport() reads these from process.env when its
-	// factory runs. Set them before host.load() touches the extension.
-	process.env.CSP_MOCK = "1";
-	process.env.CSP_MOCK_FIXTURES = JSON.stringify(deps.cspFixtures);
+	// factory runs. In mock mode we set them before host.load(); in live mode we
+	// clear the mock so the connector hits the real CSP backend with CSP_TOKEN.
+	if (deps.live) {
+		process.env.CSP_MOCK = "";
+	} else {
+		process.env.CSP_MOCK = "1";
+		process.env.CSP_MOCK_FIXTURES = JSON.stringify(deps.cspFixtures);
+	}
 
 	// Host with an in-memory store (memory tools need a store; eval keeps it
 	// throwaway — agent-private instincts/history don't survive the run).
