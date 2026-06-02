@@ -115,3 +115,14 @@ calling the `act` tool, so the headline can UNDERCOUNT real work. Because the
 claude-code runtime reports toolCalls:[], the server can't observe those raw CSP
 writes — closing this needs MCP-layer call logging or CSP-side note counting
 (follow-up). The bands that ARE recorded are correct; the count is a floor.
+
+## 2026-06-02 — digest undercount closed (MCP-layer action observer)
+
+Added server-side observation of every MCP tool call (the window into the
+claude-code subprocess). When the agent logs a CSP note without calling `act`,
+an implicit Act is recorded (deduped against explicit band tools), so the daily
+digest no longer undercounts. Wired into production (/mcp) + the eval harness;
+unit-tested. The known-limitation from the prior section is now CLOSED.
+
+Live portfolio re-run (6 accounts): the agent judged most accounts as needing no
+action this cycle (legitimate restraint) — digest reflected its real decisions.
