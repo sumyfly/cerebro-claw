@@ -1,6 +1,7 @@
 import type {
 	CustomerProfile,
 	CustomerState,
+	DecisionRecord,
 	HistoryEntry,
 	InstinctEntry,
 } from "./customer.js";
@@ -24,4 +25,8 @@ export interface MemoryStore {
 	addInstinct(entry: InstinctEntry): Promise<void>;
 	getInstincts(customerId: string): Promise<InstinctEntry[]>;
 	searchInstincts(customerId: string, query: string): Promise<InstinctEntry[]>;
+
+	// Decision memory (change detection across brain-loop cycles)
+	getLastDecision(customerId: string): Promise<DecisionRecord | null>;
+	recordDecision(record: DecisionRecord): Promise<void>;
 }

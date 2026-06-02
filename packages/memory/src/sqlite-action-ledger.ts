@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
-import Database from "better-sqlite3";
 import type {
 	ActionBand,
 	ActionLedger,
 	ActionLedgerEntry,
 	ActionStatus,
 } from "@cerebro-claw/shared";
+import Database from "better-sqlite3";
 
 interface Row {
 	id: string;
@@ -127,9 +127,9 @@ export class SqliteActionLedger implements ActionLedger {
 	}
 
 	async get(id: string): Promise<ActionLedgerEntry | null> {
-		const row = this.db
-			.prepare("SELECT * FROM action_ledger WHERE id = ?")
-			.get(id) as Row | undefined;
+		const row = this.db.prepare("SELECT * FROM action_ledger WHERE id = ?").get(id) as
+			| Row
+			| undefined;
 		return row ? this.toEntry(row) : null;
 	}
 

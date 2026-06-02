@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { SqliteStore } from "../sqlite-store.js";
 import { unlinkSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { SqliteStore } from "../sqlite-store.js";
 
 const TEST_DB = "/tmp/cerebro-claw-test.db";
 
@@ -8,13 +8,17 @@ describe("SqliteStore", () => {
 	let store: SqliteStore;
 
 	beforeEach(() => {
-		try { unlinkSync(TEST_DB); } catch {}
+		try {
+			unlinkSync(TEST_DB);
+		} catch {}
 		store = new SqliteStore(TEST_DB);
 	});
 
 	afterEach(() => {
 		store.close();
-		try { unlinkSync(TEST_DB); } catch {}
+		try {
+			unlinkSync(TEST_DB);
+		} catch {}
 	});
 
 	it("persists and retrieves a profile", async () => {
@@ -116,5 +120,56 @@ describe("SqliteStore", () => {
 		const profile = await store2.getProfile("acme");
 		expect(profile?.companyName).toBe("Acme");
 		store2.close();
+	});
+});
+
+describe("SqliteStore decision memory", () => {
+	const DB = "/tmp/cerebro-claw-decisions-test.db";
+	let s: SqliteStore;
+	beforeEach(() => {
+		try {
+			unlinkSync(DB);
+		} catch {}
+		s = new SqliteStore(DB);
+	});
+	afterEach(() => s.close());
+
+	it("round-trips and upserts the latest decision", async () => {
+		expect(await s.getLastDecision("c1")).toBeNull();
+		const ts = new Date("2026-06-02T00:00:00Z");
+		await s.recordDecision({
+			customerId: "c1",
+			signalFingerprint: "fp-1",
+			band: "act",
+			reason: "r",
+			ts,
+		});
+		expect(await s.getLastDecision("c1")).toMatchObject({
+			signalFingerprint: "fp-1",
+			band: "act",
+			reason: "r",
+		});
+		await s.recordDecision({ customerId: "c1", signalFingerprint: "fp-2", band: "escalate", ts });
+		expect((await s.getLastDecision("c1"))?.signalFingerprint).toBe("fp-2");
+	});
+});
+
+describe("SqliteStore decision memory survives reopen", () => {
+	const DB = "/tmp/cerebro-claw-decisions-reopen-test.db";
+	it("persists a decision across store instances (reopen)", async () => {
+		try {
+			unlinkSync(DB);
+		} catch {}
+		const a = new SqliteStore(DB);
+		await a.recordDecision({
+			customerId: "c1",
+			signalFingerprint: "fp-persist",
+			band: "act",
+			ts: new Date("2026-06-02T00:00:00Z"),
+		});
+		a.close();
+		const b = new SqliteStore(DB);
+		expect((await b.getLastDecision("c1"))?.signalFingerprint).toBe("fp-persist");
+		b.close();
 	});
 });

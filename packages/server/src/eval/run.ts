@@ -14,10 +14,16 @@
 import { InMemoryActionLedger } from "@cerebro-claw/memory";
 import { StubCsmChannel, StubCustomerChannel } from "@cerebro-claw/tools";
 import { loadConfig } from "../config.js";
+import { renderDecisionContext } from "../engine/decision-context.js";
+import { computeSignals } from "../engine/signals.js";
 import { buildAgentForEval } from "./harness.js";
 import { loadScenarios } from "./load-scenarios.js";
 import { scoreScenario } from "./score.js";
+import { snapshotFromScenario } from "./snapshot.js";
 import type { Scenario, ScenarioResult } from "./types.js";
+
+/** Fixed clock for the eval so renewal/contact day-math is deterministic. */
+const EVAL_NOW = new Date("2026-06-02T00:00:00Z");
 
 /**
  * Pull the first CSP business id out of the scenario's fixture keys. CSP account
@@ -42,13 +48,15 @@ function reviewPrompt(businessId: string): string {
 		"",
 		"Fetch the live data yourself using csp_get_account, csp_get_health_score, and csp_get_engagement. Use csp_get_notes for recent context and csp_get_renewals if a renewal is close.",
 		"",
-		"Then pick the right band from the action policy:",
-		"- act — log something you noticed (csp_create_note for team-visible, memory_instinct for agent-private).",
+		"Read the 'Decision signals' block in your context — it's the computed state to weigh.",
+		"",
+		"Then pick the right band and CALL ITS TOOL so the work is recorded:",
+		"- act — reversible, low-stakes, fact-based (e.g. a usage dip on an otherwise healthy account: log it and watch). Call the `act` tool to record it (also csp_create_note / memory_instinct as needed). Do NOT escalate routine observations.",
 		"- notify_then_send_to_customer — routine customer-facing touch (heads-up to CSM, dispatched after pause window).",
-		"- escalate — high-stakes or ambiguous (brief CSM with situation + options + recommendation).",
+		"- escalate — only for genuinely high-stakes, irreversible, or ambiguous calls (money, contract, churn, retention, or a flagged risk). Brief the CSM with situation + options + recommendation.",
 		"- prep — finished v1 artifact for a CSM-owned conversation.",
 		"",
-		"If nothing needs doing, just say so and move on. Don't draft and wait — that's the bug, not the feature.",
+		"If nothing needs doing, do not call any tool — just say 'No action needed.' Don't draft and wait — that's the bug, not the feature.",
 	].join("\n");
 }
 
@@ -85,6 +93,7 @@ async function runScenario(scenario: Scenario): Promise<ScenarioResult> {
 	await csmChannel.start(async () => null);
 
 	const instincts = scenario.memory?.instincts ?? [];
+	const overrides = scenario.memory?.overrides ?? [];
 	const agent = await buildAgentForEval({
 		ledger,
 		customerChannel,
@@ -92,17 +101,32 @@ async function runScenario(scenario: Scenario): Promise<ScenarioResult> {
 		cspFixtures: scenario.csp,
 		instincts,
 		customerId: businessId,
+		overrides,
 	});
 
-	// The instincts are seeded into the store (memory_* tools can find them) and
-	// also injected as per-account context so the agent reliably sees what the
-	// CSM has told it about this account — the band call often hinges on it.
-	const context =
-		instincts.length > 0
-			? `What the CSM has told you about this account (instinct notes):\n${instincts
-					.map((i) => `- ${i}`)
-					.join("\n")}`
-			: undefined;
+	// Compute the decision signals from the scenario's CSP data + memory and
+	// render them as the per-account context — the same engine the production
+	// loop uses. This is what gives the agent structured inputs (health/usage/
+	// renewal/override/change) instead of raw text, plus the instinct notes.
+	const built = snapshotFromScenario(scenario, EVAL_NOW);
+	let context: string | undefined;
+	if (built) {
+		let signals = computeSignals(built.snapshot);
+		// No-change scenario: replay last cycle's identical state so the agent is
+		// told nothing has moved and should default to no action.
+		const ld = scenario.memory?.lastDecision;
+		if (ld?.sameAsCurrent) {
+			signals = computeSignals({
+				...built.snapshot,
+				lastDecision: {
+					signalFingerprint: signals.signalFingerprint,
+					band: ld.band,
+					reason: ld.reason,
+				},
+			});
+		}
+		context = renderDecisionContext(signals, instincts);
+	}
 
 	try {
 		await agent.prompt(reviewPrompt(businessId), context, `eval:${scenario.id}`);
