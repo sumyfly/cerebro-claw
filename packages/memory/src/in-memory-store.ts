@@ -1,6 +1,7 @@
 import type {
 	CustomerProfile,
 	CustomerState,
+	DecisionRecord,
 	HistoryEntry,
 	InstinctEntry,
 	MemoryStore,
@@ -11,6 +12,7 @@ export class InMemoryStore implements MemoryStore {
 	private states = new Map<string, CustomerState>();
 	private history = new Map<string, HistoryEntry[]>();
 	private instincts = new Map<string, InstinctEntry[]>();
+	private decisions = new Map<string, DecisionRecord>();
 
 	async getProfile(customerId: string): Promise<CustomerProfile | null> {
 		return this.profiles.get(customerId) ?? null;
@@ -47,9 +49,7 @@ export class InMemoryStore implements MemoryStore {
 		const entries = this.history.get(customerId) ?? [];
 		const lower = query.toLowerCase();
 		return entries.filter(
-			(e) =>
-				e.summary.toLowerCase().includes(lower) ||
-				e.details?.toLowerCase().includes(lower),
+			(e) => e.summary.toLowerCase().includes(lower) || e.details?.toLowerCase().includes(lower),
 		);
 	}
 
@@ -67,5 +67,13 @@ export class InMemoryStore implements MemoryStore {
 		const entries = this.instincts.get(customerId) ?? [];
 		const lower = query.toLowerCase();
 		return entries.filter((e) => e.content.toLowerCase().includes(lower));
+	}
+
+	async getLastDecision(customerId: string): Promise<DecisionRecord | null> {
+		return this.decisions.get(customerId) ?? null;
+	}
+
+	async recordDecision(record: DecisionRecord): Promise<void> {
+		this.decisions.set(record.customerId, record);
 	}
 }

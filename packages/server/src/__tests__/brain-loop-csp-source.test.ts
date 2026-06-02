@@ -63,6 +63,27 @@ describe("createCspAccountSource — engine injection", () => {
 		expect(summary).toMatch(/MUST use the "escalate" band/);
 	});
 
+	it("persists the signal fingerprint and reports no-change on the next cycle", async () => {
+		mockCsp({
+			[`/api/v1/accounts/${ID}`]: { id: ID, name: "Acme" },
+			[`/api/v1/accounts/${ID}/health-score`]: { grade: "C", trend: "flat" },
+			[`/api/v1/accounts/${ID}/engagement`]: { trend: "flat" },
+		});
+		const store = new InMemoryStore();
+		const source = createCspAccountSource(opts(store));
+
+		// Cycle 1: first look — no prior decision, so no "no change" line, and the
+		// fingerprint gets recorded.
+		const first = await source.buildSummary(ID, "Acme");
+		expect(first).not.toContain("No material change");
+		expect(await store.getLastDecision(ID)).not.toBeNull();
+
+		// Cycle 2: identical CSP data → fingerprint matches → the agent is told
+		// nothing has changed and should default to no action.
+		const second = await source.buildSummary(ID, "Acme");
+		expect(second).toContain("No material change since last cycle");
+	});
+
 	it("degrades to the pointer prompt when CSP fetch fails", async () => {
 		vi.stubGlobal(
 			"fetch",

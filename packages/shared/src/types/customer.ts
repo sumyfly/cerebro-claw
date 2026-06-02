@@ -50,3 +50,16 @@ export interface InstinctEntry {
 	source: string;
 	createdAt: Date;
 }
+
+/**
+ * The agent's last decision for an account — used for change detection across
+ * brain-loop cycles. If the current signal fingerprint matches the stored one,
+ * nothing material has changed and the agent should default to no action.
+ */
+export interface DecisionRecord {
+	customerId: string;
+	signalFingerprint: string;
+	band: string;
+	reason?: string;
+	ts: Date;
+}

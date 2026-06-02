@@ -6,6 +6,7 @@ export type {
 	UsageTrend,
 	HistoryEntry,
 	InstinctEntry,
+	DecisionRecord,
 } from "./customer.js";
 
 export type { MemoryStore } from "./memory.js";

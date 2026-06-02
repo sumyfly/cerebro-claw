@@ -173,6 +173,7 @@ export function createCspAccountSource(opts: CspAccountSourceOptions): AccountSo
 				const instinctEntries = opts.store ? await opts.store.getInstincts(id) : [];
 				const instincts = instinctEntries.map((i) => i.content);
 				const overrideBand = parseOverrideBand(instincts);
+				const last = opts.store ? await opts.store.getLastDecision(id) : null;
 				const snapshot: AccountSnapshot = {
 					account: account as AccountSnapshot["account"],
 					healthScore: healthScore as AccountSnapshot["healthScore"],
@@ -180,9 +181,26 @@ export function createCspAccountSource(opts: CspAccountSourceOptions): AccountSo
 					renewals: extractRenewals(renewals),
 					instincts,
 					overrides: overrideBand ? [{ rule: "stored override", forcesBand: overrideBand }] : [],
+					lastDecision: last
+						? { signalFingerprint: last.signalFingerprint, band: last.band, reason: last.reason }
+						: undefined,
 					now: (opts.now ?? (() => new Date()))(),
 				};
-				const context = renderDecisionContext(computeSignals(snapshot), instincts);
+				const signals = computeSignals(snapshot);
+				// Persist this cycle's signal fingerprint so next cycle can detect
+				// whether anything material changed (cross-cycle dedup). Band carries
+				// the last known decision; it's informational — the fingerprint is
+				// what drives change detection.
+				if (opts.store) {
+					await opts.store.recordDecision({
+						customerId: id,
+						signalFingerprint: signals.signalFingerprint,
+						band: last?.band ?? "reviewed",
+						reason: "auto: brain-loop signal snapshot",
+						ts: (opts.now ?? (() => new Date()))(),
+					});
+				}
+				const context = renderDecisionContext(signals, instincts);
 				return `${context}\n\n${pointer}`;
 			} catch (err) {
 				console.error(
