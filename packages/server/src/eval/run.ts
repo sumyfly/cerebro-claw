@@ -16,6 +16,7 @@ import { StubCsmChannel, StubCustomerChannel } from "@cerebro-claw/tools";
 import { loadConfig } from "../config.js";
 import { renderDecisionContext } from "../engine/decision-context.js";
 import { computeSignals } from "../engine/signals.js";
+import { reviewMessage } from "../review-prompt.js";
 import { buildAgentForEval } from "./harness.js";
 import { loadScenarios } from "./load-scenarios.js";
 import { scoreScenario } from "./score.js";
@@ -35,29 +36,6 @@ function firstBusinessId(scenario: Scenario): string | null {
 		if (m) return m[1];
 	}
 	return null;
-}
-
-/**
- * The per-account review prompt the brain loop uses for the CSP source: name the
- * business id, tell the agent to fetch live data via csp_* tools, then pick a band.
- * Mirrors createCspAccountSource().buildSummary + evaluateCustomer in brain-loop.ts.
- */
-function reviewPrompt(businessId: string): string {
-	return [
-		`You are reviewing a customer account (CSP business id: ${businessId}). Decide if any action is needed right now.`,
-		"",
-		"Fetch the live data yourself using csp_get_account, csp_get_health_score, and csp_get_engagement. Use csp_get_notes for recent context and csp_get_renewals if a renewal is close.",
-		"",
-		"Read the 'Decision signals' block in your context — it's the computed state to weigh.",
-		"",
-		"Then pick the right band and CALL ITS TOOL so the work is recorded:",
-		"- act — reversible, low-stakes, fact-based (e.g. a usage dip on an otherwise healthy account: log it and watch). Call the `act` tool to record it (also csp_create_note / memory_instinct as needed). Do NOT escalate routine observations.",
-		"- notify_then_send_to_customer — routine customer-facing touch (heads-up to CSM, dispatched after pause window).",
-		"- escalate — only for genuinely high-stakes, irreversible, or ambiguous calls (money, contract, churn, retention, or a flagged risk). Brief the CSM with situation + options + recommendation.",
-		"- prep — finished v1 artifact for a CSM-owned conversation.",
-		"",
-		"If nothing needs doing, do not call any tool — just say 'No action needed.' Don't draft and wait — that's the bug, not the feature.",
-	].join("\n");
 }
 
 export function printScorecard(results: ScenarioResult[]): number {
@@ -129,7 +107,7 @@ async function runScenario(scenario: Scenario): Promise<ScenarioResult> {
 	}
 
 	try {
-		await agent.prompt(reviewPrompt(businessId), context, `eval:${scenario.id}`);
+		await agent.prompt(reviewMessage(scenario.id, businessId), context, `eval:${scenario.id}`);
 	} finally {
 		await agent.close();
 	}

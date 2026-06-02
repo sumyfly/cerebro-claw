@@ -4,6 +4,7 @@ import { cspToSnapshot, deriveHealthTrend } from "./engine/csp-snapshot.js";
 import { renderDecisionContext } from "./engine/decision-context.js";
 import { parseOverrideBand } from "./engine/overrides.js";
 import { type AccountSnapshot, computeSignals } from "./engine/signals.js";
+import { BAND_GUIDANCE, reviewPointer } from "./review-prompt.js";
 
 export interface EventEmitter {
 	emit<T = unknown>(event: ExtensionEvent, payload: T): Promise<void>;
@@ -151,19 +152,7 @@ export function createCspAccountSource(opts: CspAccountSourceOptions): AccountSo
 			}
 		},
 		async buildSummary(id, companyName) {
-			const pointer = [
-				`You are reviewing customer "${companyName}" (CSP business id: ${id}).`,
-				"",
-				"The Decision signals above are computed from live CSP data + memory. You may also fetch fresh detail with csp_get_account, csp_get_health_score, csp_get_engagement, csp_get_notes, csp_get_renewals.",
-				"",
-				"Pick the right band and CALL ITS TOOL so the work is recorded:",
-				"- act — reversible, low-stakes, fact-based (log + watch). Don't escalate routine observations.",
-				"- notify_then_send_to_customer — routine customer-facing touch (heads-up to CSM first).",
-				"- escalate — genuinely high-stakes/irreversible/ambiguous; brief the CSM with situation + options + recommendation.",
-				"- prep — finished v1 artifact for a CSM-owned conversation.",
-				"",
-				"If nothing needs doing, do not call any tool — just say so. Don't draft and wait — that's the bug, not the feature.",
-			].join("\n");
+			const pointer = reviewPointer(companyName, id);
 
 			// Compute the decision signals server-side and inject them so the agent
 			// reasons with structured inputs (health/usage/renewal/override/change),
@@ -339,11 +328,7 @@ Be terse. The CSM scans this in 30 seconds. If you need to take additional actio
 
 ${summary}
 
-Pick the right band from the action policy:
-- act — log something you noticed (csp_create_note for team-visible, memory_instinct for agent-private).
-- notify_then_send_to_customer — routine customer-facing touch (heads-up to CSM, dispatched after pause window).
-- escalate — high-stakes or ambiguous (brief CSM with options + recommendation).
-- prep — finished v1 artifact for a CSM-owned conversation.
+${BAND_GUIDANCE}
 
 If nothing needs doing, say "No action needed for ${companyName}." and move on.`;
 

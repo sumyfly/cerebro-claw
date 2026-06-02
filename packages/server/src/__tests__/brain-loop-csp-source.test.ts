@@ -53,8 +53,8 @@ describe("createCspAccountSource — engine injection", () => {
 		expect(summary).toContain("Usage trend: down"); // 7d=40 << weekly avg ~93
 		expect(summary).toContain("$48,000/yr"); // mrr 4000 * 12
 		expect(summary).toContain("Renewal: 30 day(s) away");
-		// Pointer prompt is still appended.
-		expect(summary).toContain("Pick the right band and CALL ITS TOOL");
+		// Pointer prompt is still appended (band menu is added by the caller, not here).
+		expect(summary).toContain("csp_get_account");
 	});
 
 	it("surfaces a stored override as a hard MUST directive", async () => {
@@ -142,6 +142,6 @@ describe("createCspAccountSource — engine injection", () => {
 		const summary = await source.buildSummary(ID, "Acme");
 		// computeSignals still runs on an empty snapshot, so a signals block renders,
 		// but the pointer must always be present and nothing should throw.
-		expect(summary).toContain("Pick the right band and CALL ITS TOOL");
+		expect(summary).toContain("csp_get_account");
 	});
 });

@@ -19,11 +19,8 @@ import { InMemoryActionLedger, InMemoryStore } from "@cerebro-claw/memory";
 import type { ActionLedgerEntry } from "@cerebro-claw/shared";
 import { StubCsmChannel, StubCustomerChannel } from "@cerebro-claw/tools";
 import { createCspAccountSource } from "../brain-loop.js";
+import { reviewMessage } from "../review-prompt.js";
 import { buildAgentForEval } from "./harness.js";
-
-function reviewUserMessage(name: string, id: string): string {
-	return `Review customer "${name}" (CSP business id: ${id}) now. Weigh the Decision signals above, optionally fetch fresh detail with the csp_* tools, then take the single appropriate action by calling its band tool (act / notify_then_send_to_customer / escalate / prep), or do nothing if nothing is warranted.`;
-}
 
 async function main(): Promise<void> {
 	if (/^(1|true|yes)$/i.test(process.env.CSP_INSECURE_TLS ?? "")) {
@@ -80,7 +77,7 @@ async function main(): Promise<void> {
 		let text = "";
 		try {
 			const res = (await agent.prompt(
-				reviewUserMessage(acct.companyName, acct.id),
+				reviewMessage(acct.companyName, acct.id),
 				context,
 				`live:${acct.id}`,
 			)) as { text?: string };
