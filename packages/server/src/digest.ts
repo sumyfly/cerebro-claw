@@ -20,7 +20,9 @@ export async function computeDigestCounts(
 	windowHours = 24,
 ): Promise<DigestCounts> {
 	const since = new Date(now.getTime() - windowHours * 3600 * 1000);
-	const recent = await ledger.listByWindow(since, now);
+	// listByWindow's upper bound is exclusive; +1ms makes the window inclusive of
+	// `now` so an action recorded/resolved this instant isn't dropped from counts.
+	const recent = await ledger.listByWindow(since, new Date(now.getTime() + 1));
 	const open = await ledger.listOpen();
 	return {
 		windowHours,
