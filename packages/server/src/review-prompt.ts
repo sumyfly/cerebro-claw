@@ -9,8 +9,10 @@
 
 /** The action-policy band menu + the "call the tool, don't draft" instruction. */
 export const BAND_GUIDANCE = [
-	"Pick the right band and CALL ITS TOOL so the work is recorded:",
-	"- act — reversible, low-stakes, fact-based (log + watch). Don't escalate routine observations. Note: logging a CSP note IS your Act — it's recorded automatically, so don't also call the `act` tool for the same note (use `act` only for non-note observations like an instinct).",
+	"Decide whether anything actually needs doing. A healthy account with no material change needs NO action — do not log a 'reviewed, all good' note; just say no action is needed. Acting for the sake of it is noise.",
+	"",
+	"Only if something genuinely warrants it, pick the band and CALL ITS TOOL:",
+	"- act — a real, reversible, low-stakes observation worth recording (e.g. a notable usage dip to watch). If you record it as a CSP note, that note IS the Act (recorded automatically) — don't also call the `act` tool for the same note.",
 	"- notify_then_send_to_customer — routine customer-facing touch (heads-up to CSM first).",
 	"- escalate — genuinely high-stakes/irreversible/ambiguous; brief the CSM with situation + options + recommendation.",
 	"- prep — finished v1 artifact for a CSM-owned conversation.",
