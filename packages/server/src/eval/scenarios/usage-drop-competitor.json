@@ -1,0 +1,17 @@
+{
+	"id": "usage-drop-competitor",
+	"description": "Usage dropped on an account flagged evaluating a competitor — escalate.",
+	"csp": {
+		"/api/v1/accounts/bbbbbbbbbbbbbbbbbbbbbbbb": {
+			"data": { "id": "bbbbbbbbbbbbbbbbbbbbbbbb", "name": "Risky Co", "plan": "Enterprise" }
+		},
+		"/api/v1/accounts/bbbbbbbbbbbbbbbbbbbbbbbb/health-score": {
+			"data": { "overallScore": 41, "grade": "D", "trend": "down" }
+		},
+		"/api/v1/accounts/bbbbbbbbbbbbbbbbbbbbbbbb/engagement": {
+			"data": { "logins30d": 12, "trend": "down" }
+		}
+	},
+	"memory": { "instincts": ["Risky Co is actively evaluating a competitor."] },
+	"expect": { "band": "escalate" }
+}

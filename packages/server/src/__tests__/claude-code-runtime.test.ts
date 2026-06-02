@@ -1,8 +1,32 @@
-import { describe, it, expect } from "vitest";
-import { writeFileSync, mkdtempSync, chmodSync, readFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ClaudeCodeRuntime } from "../claude-code-runtime.js";
+import { describe, expect, it } from "vitest";
+import { ClaudeCodeRuntime, buildClaudeArgs } from "../claude-code-runtime.js";
+
+describe("buildClaudeArgs", () => {
+	it("always appends the Cerebro system prompt", () => {
+		const args = buildClaudeArgs({ userMessage: "review Acme", model: "claude-opus-4-8" });
+		const i = args.indexOf("--append-system-prompt");
+		expect(i).toBeGreaterThan(-1);
+		expect(args[i + 1]).toContain("Cerebro Claw");
+	});
+
+	it("merges per-account context after the system prompt", () => {
+		const args = buildClaudeArgs({ userMessage: "x", model: "m", context: "Customer: Acme" });
+		const i = args.indexOf("--append-system-prompt");
+		expect(args[i + 1]).toContain("Cerebro Claw");
+		expect(args[i + 1]).toContain("Customer: Acme");
+	});
+
+	it("includes the user message via -p and stream-json output", () => {
+		const args = buildClaudeArgs({ userMessage: "hello", model: "m" });
+		expect(args).toContain("-p");
+		expect(args).toContain("hello");
+		expect(args).toContain("--output-format");
+		expect(args).toContain("stream-json");
+	});
+});
 
 /**
  * Drives the runtime against a fake `claude` binary so we don't depend on
@@ -134,12 +158,7 @@ printf '%s\\n' '{"type":"result","result":"ok"}'
 	it("when mcpUrl is given, passes --mcp-config pointing at a temp file with the URL", async () => {
 		const { path, argsFile } = makeArgCapturingClaude();
 		const tools = [makeFakeTool("csp_get_account"), makeFakeTool("memory_read")];
-		const runtime = new ClaudeCodeRuntime(
-			"sonnet",
-			tools,
-			path,
-			"http://127.0.0.1:9999/mcp",
-		);
+		const runtime = new ClaudeCodeRuntime("sonnet", tools, path, "http://127.0.0.1:9999/mcp");
 		await runtime.prompt("hi");
 
 		const argv = JSON.parse(readFileSync(argsFile, "utf8")) as string[];
@@ -156,12 +175,7 @@ printf '%s\\n' '{"type":"result","result":"ok"}'
 	it("when mcpUrl is given, passes --allowed-tools listing every registered tool", async () => {
 		const { path, argsFile } = makeArgCapturingClaude();
 		const tools = [makeFakeTool("csp_get_account"), makeFakeTool("memory_read")];
-		const runtime = new ClaudeCodeRuntime(
-			"sonnet",
-			tools,
-			path,
-			"http://127.0.0.1:9999/mcp",
-		);
+		const runtime = new ClaudeCodeRuntime("sonnet", tools, path, "http://127.0.0.1:9999/mcp");
 		await runtime.prompt("hi");
 
 		const argv = JSON.parse(readFileSync(argsFile, "utf8")) as string[];

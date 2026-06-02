@@ -1,0 +1,16 @@
+{
+	"id": "healthy-quiet",
+	"description": "Healthy account, no signal change — agent should do nothing.",
+	"csp": {
+		"/api/v1/accounts/aaaaaaaaaaaaaaaaaaaaaaaa": {
+			"data": { "id": "aaaaaaaaaaaaaaaaaaaaaaaa", "name": "Quiet Co", "plan": "Pro" }
+		},
+		"/api/v1/accounts/aaaaaaaaaaaaaaaaaaaaaaaa/health-score": {
+			"data": { "overallScore": 88, "grade": "A", "trend": "flat" }
+		},
+		"/api/v1/accounts/aaaaaaaaaaaaaaaaaaaaaaaa/engagement": {
+			"data": { "logins30d": 120, "trend": "flat" }
+		}
+	},
+	"expect": { "band": "none" }
+}
