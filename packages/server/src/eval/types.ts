@@ -17,6 +17,12 @@ export interface Scenario {
 	memory?: {
 		instincts?: string[];
 		overrides?: ScenarioOverride[];
+		/**
+		 * Prior-cycle decision for change-detection scenarios. `sameAsCurrent`
+		 * means last cycle saw the identical signal state — the runner injects a
+		 * matching fingerprint so the agent is told nothing has changed.
+		 */
+		lastDecision?: { band?: string; reason?: string; sameAsCurrent?: boolean };
 	};
 	expect: {
 		band: ExpectedBand;

@@ -48,13 +48,15 @@ function reviewPrompt(businessId: string): string {
 		"",
 		"Fetch the live data yourself using csp_get_account, csp_get_health_score, and csp_get_engagement. Use csp_get_notes for recent context and csp_get_renewals if a renewal is close.",
 		"",
-		"Then pick the right band from the action policy:",
-		"- act — log something you noticed (csp_create_note for team-visible, memory_instinct for agent-private).",
+		"Read the 'Decision signals' block in your context — it's the computed state to weigh.",
+		"",
+		"Then pick the right band and CALL ITS TOOL so the work is recorded:",
+		"- act — reversible, low-stakes, fact-based (e.g. a usage dip on an otherwise healthy account: log it and watch). Call the `act` tool to record it (also csp_create_note / memory_instinct as needed). Do NOT escalate routine observations.",
 		"- notify_then_send_to_customer — routine customer-facing touch (heads-up to CSM, dispatched after pause window).",
-		"- escalate — high-stakes or ambiguous (brief CSM with situation + options + recommendation).",
+		"- escalate — only for genuinely high-stakes, irreversible, or ambiguous calls (money, contract, churn, retention, or a flagged risk). Brief the CSM with situation + options + recommendation.",
 		"- prep — finished v1 artifact for a CSM-owned conversation.",
 		"",
-		"If nothing needs doing, just say so and move on. Don't draft and wait — that's the bug, not the feature.",
+		"If nothing needs doing, do not call any tool — just say 'No action needed.' Don't draft and wait — that's the bug, not the feature.",
 	].join("\n");
 }
 
@@ -107,9 +109,24 @@ async function runScenario(scenario: Scenario): Promise<ScenarioResult> {
 	// loop uses. This is what gives the agent structured inputs (health/usage/
 	// renewal/override/change) instead of raw text, plus the instinct notes.
 	const built = snapshotFromScenario(scenario, EVAL_NOW);
-	const context = built
-		? renderDecisionContext(computeSignals(built.snapshot), instincts)
-		: undefined;
+	let context: string | undefined;
+	if (built) {
+		let signals = computeSignals(built.snapshot);
+		// No-change scenario: replay last cycle's identical state so the agent is
+		// told nothing has moved and should default to no action.
+		const ld = scenario.memory?.lastDecision;
+		if (ld?.sameAsCurrent) {
+			signals = computeSignals({
+				...built.snapshot,
+				lastDecision: {
+					signalFingerprint: signals.signalFingerprint,
+					band: ld.band,
+					reason: ld.reason,
+				},
+			});
+		}
+		context = renderDecisionContext(signals, instincts);
+	}
 
 	try {
 		await agent.prompt(reviewPrompt(businessId), context, `eval:${scenario.id}`);

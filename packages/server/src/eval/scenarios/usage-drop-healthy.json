@@ -1,0 +1,21 @@
+{
+	"id": "usage-drop-healthy",
+	"description": "Usage dipped on an otherwise healthy account, no risk flags — log and watch (act), do not escalate.",
+	"csp": {
+		"/api/v1/accounts/dddddddddddddddddddddddd": {
+			"data": {
+				"id": "dddddddddddddddddddddddd",
+				"name": "Steady Co",
+				"plan": "Pro",
+				"contractValue": 18000
+			}
+		},
+		"/api/v1/accounts/dddddddddddddddddddddddd/health-score": {
+			"data": { "overallScore": 72, "grade": "B", "trend": "down" }
+		},
+		"/api/v1/accounts/dddddddddddddddddddddddd/engagement": {
+			"data": { "logins30d": 45, "trend": "down" }
+		}
+	},
+	"expect": { "band": "act" }
+}
