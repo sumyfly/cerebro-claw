@@ -23,3 +23,28 @@ Notes:
   no-change dedup → `none` (needs A4 decision memory); renewal-window → notify/prep.
 - Reminder: claude-code reports toolCalls:[]; scores are read from the action
   ledger (ground truth of what the agent did), not the runtime.
+
+## 2026-06-02 — full judgment battery (5 scenarios)
+
+After C1/C2/A4 (act-band recording, ambiguous + no-change scenarios).
+
+```
+[PASS] healthy-quiet: expected none, got none
+[PASS] no-change-dedup: expected none, got none
+[PASS] override-escalate-everything: expected escalate, got escalate
+[PASS] usage-drop-competitor: expected escalate, got escalate
+[PASS] usage-drop-healthy: expected act, got act
+5/5 passed
+```
+
+Notes:
+- The two hard cases passed for the right reason: `usage-drop-healthy` → `act`
+  (did NOT over-escalate a routine dip), `no-change-dedup` → `none` (did NOT
+  re-act when the signal fingerprint was unchanged from last cycle).
+- This validates the engine (signals + decision-context + override gate) against
+  the real model on the AMBIGUOUS middle, not just the easy ends.
+- STILL OUTSTANDING for "actual CSM over cerebro": the engine is wired into the
+  EVAL; it must also be wired into the PRODUCTION brain loop (B1) with persisted
+  override + decision stores (B2). Until then the intelligence lives in the test
+  rig, not the running agent.
+
