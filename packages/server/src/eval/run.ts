@@ -27,12 +27,14 @@ import type { Scenario, ScenarioResult } from "./types.js";
 const EVAL_NOW = new Date("2026-06-02T00:00:00Z");
 
 /**
- * Pull the first CSP business id out of the scenario's fixture keys. CSP account
- * paths look like /api/v1/accounts/<24-hex-id>[/...]; we take the id segment.
+ * Pull the business id from the scenario's bare account fixture key. Anchored
+ * with `$` so it matches the same key snapshotFromScenario uses — otherwise a
+ * scenario with only sub-path keys could yield an id here but a null snapshot
+ * there, silently running the agent with no decision-signals context.
  */
 function firstBusinessId(scenario: Scenario): string | null {
 	for (const path of Object.keys(scenario.csp)) {
-		const m = path.match(/\/api\/v1\/accounts\/([0-9a-f]{24})/i);
+		const m = path.match(/\/api\/v1\/accounts\/([0-9a-f]{24})$/i);
 		if (m) return m[1];
 	}
 	return null;
