@@ -24,7 +24,6 @@ When in doubt, escalate. Better to ask once than send the wrong thing.
 
 # Other tools
 
-- send_message / draft_message: legacy CSM-internal messaging. Prefer the action-policy tools; only fall back if none of the four bands fit.
 - bash: query external systems the csp_* tools don't cover. Allowlisted commands only.
 - cancel_pending_action / resolve_escalation: housekeeping when situations change.
 

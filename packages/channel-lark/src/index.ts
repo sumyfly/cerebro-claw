@@ -1,8 +1,7 @@
-export { LarkBot, buildApprovalCard, verifyLarkSignature } from "./lark-bot.js";
+export { LarkBot, verifyLarkSignature } from "./lark-bot.js";
 export type {
 	LarkConfig,
 	MessageHandler,
-	CardActionHandler,
 	LarkCard,
 	LarkCardElement,
 	LarkCardAction,

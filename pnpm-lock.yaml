@@ -120,6 +120,9 @@ importers:
       '@ant-design/icons':
         specifier: ^5.6.1
         version: 5.6.1(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      '@cerebro-claw/shared':
+        specifier: workspace:*
+        version: link:../shared
       antd:
         specifier: ^5.22.0
         version: 5.29.3(react-dom@19.2.6(react@19.2.6))(react@19.2.6)

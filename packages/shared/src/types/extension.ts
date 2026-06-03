@@ -34,8 +34,6 @@ export type ExtensionEvent =
 	| "channel_message_sent"
 	| "brain_loop_cycle_start"
 	| "brain_loop_cycle_end"
-	| "pending_action_created"
-	| "pending_action_resolved"
 	| "shutdown";
 
 export type EventHandler<T = unknown> = (payload: T) => void | Promise<void>;

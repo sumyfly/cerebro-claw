@@ -22,9 +22,8 @@ export interface AccountSource {
 	list(): Promise<{ id: string; companyName: string }[]>;
 	/**
 	 * Build the per-account context fed to the agent. MUST be side-effect free —
-	 * it is called both per-cycle (evaluateCustomer) and on-demand (runDigest), so
-	 * it may run several times per account. Persisting state here would corrupt
-	 * change-detection; record that in `onEvaluated` instead.
+	 * it may run several times per account within a cycle. Persisting state here
+	 * would corrupt change-detection; record that in `onEvaluated` instead.
 	 */
 	buildSummary(id: string, companyName: string): Promise<string>;
 	/**
@@ -187,7 +186,7 @@ export function createCspAccountSource(opts: CspAccountSourceOptions): AccountSo
 				const signals = computeSignals(snapshot);
 				// Stash this cycle's fingerprint; onEvaluated persists it ONCE after
 				// the agent reviews. Recording here would corrupt change-detection,
-				// since buildSummary also runs from runDigest / repeat calls.
+				// since buildSummary may run several times per cycle.
 				pendingSnapshot.set(id, {
 					signalFingerprint: signals.signalFingerprint,
 					healthScore: mapped.healthScore?.overallScore,
@@ -266,32 +265,6 @@ export class BrainLoop {
 		console.log("[brain-loop] Stopped");
 	}
 
-	async runDigest(): Promise<string> {
-		const accounts = await this.source.list();
-		if (accounts.length === 0) return "No customers yet.";
-
-		const summaries = await Promise.all(
-			accounts.map((a) => this.source.buildSummary(a.id, a.companyName)),
-		);
-
-		const prompt = `You are preparing the daily digest for the CSM. Their accounts:
-
-${summaries.join("\n\n---\n\n")}
-
-Produce the headline in exactly this format, filling in real counts from today's ledger:
-"Yesterday: N acts, M notifies in-flight, K escalations need you."
-
-Then list:
-1. Escalations needing the CSM (≤5). Each: customer, situation in one line, your recommendation.
-2. Top notifies in flight (≤5).
-3. What's going well — one line.
-
-Be terse. The CSM scans this in 30 seconds. If you need to take additional action while writing the digest, use the matching action-policy tool (act / notify_then_send_to_customer / escalate / prep). Do not draft messages and wait.`;
-
-		const response = await this.agent.prompt(prompt, undefined, "brain:digest");
-		return response.text;
-	}
-
 	private async cycle(): Promise<void> {
 		if (this.running) {
 			console.log("[brain-loop] Previous cycle still running, skipping");
@@ -342,7 +315,7 @@ If nothing needs doing, say "No action needed for ${companyName}." and move on.`
 			console.error(`[brain-loop] Error evaluating ${companyName}: ${detail}`);
 		} finally {
 			// Persist this cycle's signal snapshot exactly once, after the review —
-			// never from buildSummary (which also runs in runDigest).
+			// never from buildSummary (which may run several times per cycle).
 			await this.source.onEvaluated?.(customerId);
 		}
 	}

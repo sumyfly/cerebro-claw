@@ -11,11 +11,7 @@ export type {
 
 export type { MemoryStore } from "./memory.js";
 
-export type {
-	InboundMessage,
-	OutboundMessage,
-	PendingAction,
-} from "./message.js";
+export type { InboundMessage } from "./message.js";
 
 export type {
 	ToolDefinition,
@@ -42,3 +38,5 @@ export type {
 } from "./action.js";
 
 export type { CustomerChannel } from "./customer-channel.js";
+
+export type { RecentToolCall } from "./recent-tool-call.js";

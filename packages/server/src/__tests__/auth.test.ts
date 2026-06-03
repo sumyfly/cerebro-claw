@@ -22,7 +22,7 @@ describe("createAdminAuth", () => {
 		const auth = createAdminAuth("");
 		const next = vi.fn() as unknown as NextFunction;
 		const { res } = makeRes();
-		auth(makeReq("/api/customers"), res, next);
+		auth(makeReq("/api/ledger"), res, next);
 		expect(next).toHaveBeenCalled();
 	});
 
@@ -30,7 +30,7 @@ describe("createAdminAuth", () => {
 		const auth = createAdminAuth("secret");
 		const next = vi.fn() as unknown as NextFunction;
 		const { res, statusSpy } = makeRes();
-		auth(makeReq("/api/customers"), res, next);
+		auth(makeReq("/api/ledger"), res, next);
 		expect(statusSpy).toHaveBeenCalledWith(401);
 		expect(next).not.toHaveBeenCalled();
 	});
@@ -39,7 +39,7 @@ describe("createAdminAuth", () => {
 		const auth = createAdminAuth("secret");
 		const next = vi.fn() as unknown as NextFunction;
 		const { res } = makeRes();
-		auth(makeReq("/api/customers", "Bearer secret"), res, next);
+		auth(makeReq("/api/ledger", "Bearer secret"), res, next);
 		expect(next).toHaveBeenCalled();
 	});
 
@@ -47,7 +47,7 @@ describe("createAdminAuth", () => {
 		const auth = createAdminAuth("secret");
 		const next = vi.fn() as unknown as NextFunction;
 		const { res, statusSpy } = makeRes();
-		auth(makeReq("/api/customers", "Bearer wrong"), res, next);
+		auth(makeReq("/api/ledger", "Bearer wrong"), res, next);
 		expect(statusSpy).toHaveBeenCalledWith(401);
 		expect(next).not.toHaveBeenCalled();
 	});

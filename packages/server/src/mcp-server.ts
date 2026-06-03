@@ -1,7 +1,7 @@
 /**
  * Cerebro Claw MCP server.
  *
- * Exposes the agent's tools (csp_*, memory_*, draft_message, send_message, bash)
+ * Exposes the agent's tools (csp_*, memory_*, act/notify/escalate/prep, bash)
  * over MCP so an external agent (Claude Code subprocess, or any other MCP client)
  * can call them. This is the bridge that lets the `claude-code` runtime work
  * without an Anthropic API key — Claude Code connects to this server via

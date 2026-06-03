@@ -2,12 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { verifyLarkSignature } from "@cerebro-claw/channel-lark";
 import { SqliteActionLedger, SqliteStore } from "@cerebro-claw/memory";
-import type {
-	ActionLedger,
-	CustomerChannel,
-	MemoryStore,
-	PendingAction,
-} from "@cerebro-claw/shared";
+import type { ActionLedger, CustomerChannel, MemoryStore } from "@cerebro-claw/shared";
 import { StubCustomerChannel } from "@cerebro-claw/tools";
 import express, { type Express } from "express";
 import { createActionObserver } from "./action-observer.js";
@@ -18,10 +13,8 @@ import { createActionPolicyExtension } from "./builtin-extensions/action-policy-
 import { createBashToolExtension } from "./builtin-extensions/bash-tool-extension.js";
 import { createLarkExtension } from "./builtin-extensions/lark-extension.js";
 import { memoryToolsExtension } from "./builtin-extensions/memory-tools-extension.js";
-import { createMessageToolsExtension } from "./builtin-extensions/message-tools-extension.js";
 import { ClaudeCodeRuntime } from "./claude-code-runtime.js";
 import { loadConfig } from "./config.js";
-import { cspReaderFromEnv, getCspDetail, listCspSummaries } from "./csp-customers.js";
 import { computeDigestCounts, digestHeadline } from "./digest.js";
 import { NotifyThenActDispatcher } from "./dispatcher.js";
 import { resolveOverrideFromStore } from "./engine/overrides.js";
@@ -29,6 +22,7 @@ import { ExtensionHost } from "./extension-host.js";
 import { loadExtensionsFromDir } from "./extension-loader.js";
 import { createMcpHandler } from "./mcp-server.js";
 import { errorHandler, notFoundHandler, requestLogger } from "./middleware.js";
+import { type RecentToolCall, createRecentToolCalls } from "./recent-tools.js";
 import { Router } from "./router.js";
 
 export interface AppHandles {
@@ -68,29 +62,24 @@ export async function createApp(): Promise<AppHandles> {
 	// Action ledger — every act / notify / escalate / prep lands here
 	const ledger: ActionLedger = new SqliteActionLedger(config.dbPath);
 
-	// Customer data for the admin UI reads live from CSP when configured
-	// (source of truth for accounts/health/engagement); the local store is the
-	// fallback only when CSP isn't wired up. Agent-private history/instincts
-	// always come from the local store.
-	const cspReader = cspReaderFromEnv();
-	if (cspReader) {
-		// The CSP test backend serves an untrusted/expired TLS cert, which Node's
-		// fetch rejects. CSP_INSECURE_TLS is the opt-in escape hatch for dev/test.
-		if (/^(1|true|yes)$/i.test(process.env.CSP_INSECURE_TLS ?? "")) {
-			process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-			console.warn(
-				"[customers] CSP_INSECURE_TLS=true — TLS certificate verification is OFF process-wide. Dev/test only.",
-			);
-		}
-		console.log(`[customers] Reading live from CSP as CSM ${cspReader.csmEmail}`);
+	// The CSP test backend serves an untrusted/expired TLS cert, which Node's
+	// fetch rejects. CSP_INSECURE_TLS is the opt-in escape hatch for dev/test.
+	// The brain-loop CSP account source and the csp-connector tools both rely on
+	// this being set process-wide before any CSP fetch.
+	if (
+		process.env.CSP_TOKEN &&
+		process.env.CSP_CSM_EMAIL &&
+		/^(1|true|yes)$/i.test(process.env.CSP_INSECURE_TLS ?? "")
+	) {
+		process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+		console.warn(
+			"[csp] CSP_INSECURE_TLS=true — TLS certificate verification is OFF process-wide. Dev/test only.",
+		);
 	}
 
 	// Customer channel — stub by default. Real channels (email, SMS) drop in
 	// as extensions later by implementing CustomerChannel.
 	const customerChannel: CustomerChannel = new StubCustomerChannel();
-
-	// Pending actions queue (shared across extensions, legacy draft flow)
-	const pendingActions = new Map<string, PendingAction>();
 
 	// Extension host — collects tools, channels, and event handlers
 	const host = new ExtensionHost({
@@ -102,7 +91,6 @@ export async function createApp(): Promise<AppHandles> {
 	const lark = createLarkExtension({
 		appId: config.larkAppId,
 		appSecret: config.larkAppSecret,
-		pendingActions,
 		store,
 		defaultCsmLarkUserId: config.defaultCsmLarkUserId || undefined,
 		onMessage: async (text, senderId, _channelId) => {
@@ -126,7 +114,6 @@ export async function createApp(): Promise<AppHandles> {
 	const userExtensions = await loadExtensionsFromDir(config.extensionsDir);
 	await host.load([
 		memoryToolsExtension,
-		createMessageToolsExtension({ pendingActions, host }),
 		createActionPolicyExtension({
 			ledger,
 			customerChannel,
@@ -145,6 +132,27 @@ export async function createApp(): Promise<AppHandles> {
 		...userExtensions,
 	]);
 
+	// Recent tool-call feed (last 100) for the Skills tab's live activity panel.
+	const recentTools = createRecentToolCalls();
+	const actionObserver = createActionObserver(ledger);
+	// Compose two observers onto the single MCP onToolCall hook: the action
+	// observer keeps the ledger honest, the recorder feeds /api/tools/recent.
+	// Both run per tool call; an error in one must not skip the other.
+	const onToolCall = async (
+		name: string,
+		params: Record<string, unknown>,
+		result: { content: string; success: boolean },
+	): Promise<void> => {
+		const customerId = String(params.business_id ?? params.customer_id ?? "") || undefined;
+		recentTools.record({
+			tool: name,
+			ts: new Date().toISOString(),
+			ok: result.success,
+			...(customerId ? { customerId } : {}),
+		});
+		await actionObserver(name, params, result);
+	};
+
 	// MCP endpoint — exposes our tools to any external MCP client (Claude Code
 	// subprocess, Cursor, etc.). The Claude Code runtime uses this to call our
 	// tools without an Anthropic API key.
@@ -152,8 +160,7 @@ export async function createApp(): Promise<AppHandles> {
 		"/mcp",
 		createMcpHandler({
 			tools: () => host.getTools(),
-			// Keep the ledger honest when the agent logs a CSP note without `act`.
-			onToolCall: createActionObserver(ledger),
+			onToolCall,
 		}),
 	);
 
@@ -244,80 +251,6 @@ export async function createApp(): Promise<AppHandles> {
 
 	// --- API Routes (for admin web UI) ---
 
-	app.get("/api/customers", async (req, res) => {
-		// Live from CSP when configured. CSP_CSM has ~1.3k accounts, so cap the
-		// page (default 50, override with ?limit=, max 200).
-		if (cspReader) {
-			const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
-			res.json(await listCspSummaries(cspReader, limit));
-			return;
-		}
-		const profiles = await store.listProfiles();
-		const customers = await Promise.all(
-			profiles.map(async (p) => {
-				const state = await store.getState(p.id);
-				return { profile: p, state };
-			}),
-		);
-		res.json(customers);
-	});
-
-	app.get("/api/customers/:id", async (req, res) => {
-		const id = req.params.id;
-		// Agent-private data lives in the local store regardless of where the
-		// profile comes from.
-		const history = await store.getHistory(id, 50);
-		const instincts = await store.getInstincts(id);
-
-		// Prefer live CSP; fall back to the local store (e.g. a customer added
-		// via POST /api/customers, or demo mode with no CSP).
-		if (cspReader) {
-			const detail = await getCspDetail(cspReader, id);
-			if (detail) {
-				res.json({ ...detail, history, instincts });
-				return;
-			}
-		}
-
-		const profile = await store.getProfile(id);
-		if (!profile) {
-			res.status(404).json({ error: "Not found" });
-			return;
-		}
-		const state = await store.getState(id);
-		res.json({ profile, state, history, instincts });
-	});
-
-	app.post("/api/customers", async (req, res) => {
-		const profile = req.body;
-		profile.createdAt = new Date();
-		profile.updatedAt = new Date();
-		await store.upsertProfile(profile);
-		await store.updateState({
-			customerId: profile.id,
-			health: "good",
-			openIssues: 0,
-			lastContactDate: new Date(),
-			usageTrend: "flat",
-			updatedAt: new Date(),
-		});
-		res.status(201).json(profile);
-	});
-
-	app.get("/api/customers/:id/history", async (req, res) => {
-		const history = await store.getHistory(req.params.id, 100);
-		res.json(history);
-	});
-
-	app.get("/api/customers/:id/instincts", async (req, res) => {
-		const instincts = await store.getInstincts(req.params.id);
-		res.json(instincts);
-	});
-
-	app.get("/api/actions", (_req, res) => {
-		res.json(Array.from(pendingActions.values()));
-	});
-
 	// Action ledger — the agent's daily work log. Drives the digest.
 	app.get("/api/ledger", async (req, res) => {
 		const sinceStr = (req.query.since as string) ?? "";
@@ -380,57 +313,10 @@ export async function createApp(): Promise<AppHandles> {
 		res.json({ headline: digestHeadline(counts), counts });
 	});
 
-	app.post("/api/actions/:id/approve", async (req, res) => {
-		const action = pendingActions.get(req.params.id);
-		if (!action) {
-			res.status(404).json({ error: "Not found" });
-			return;
-		}
-		action.status = "approved";
-		if (action.draft) {
-			const sender = host.getChannelSender(action.draft.channelType);
-			if (sender) await sender.send(action.draft.recipientId, action.draft.text);
-		}
-		res.json(action);
-	});
-
-	app.post("/api/actions/:id/reject", (req, res) => {
-		const action = pendingActions.get(req.params.id);
-		if (!action) {
-			res.status(404).json({ error: "Not found" });
-			return;
-		}
-		action.status = "rejected";
-		res.json(action);
-	});
-
-	// Chat
-	app.post("/api/chat", async (req, res) => {
-		const { message, customerId, sessionId } = req.body;
-		const chatSessionId = sessionId ?? (customerId ? `chat:${customerId}` : "chat:general");
-		const context = customerId ? `Current customer context: ${customerId}` : undefined;
-		const response = await agent.prompt(message, context, chatSessionId);
-		res.json({ text: response.text, toolCalls: response.toolCalls, sessionId: chatSessionId });
-	});
-
-	app.post("/api/digest", async (_req, res) => {
-		try {
-			const digest = await brainLoop.runDigest();
-			res.json({ text: digest });
-		} catch (err) {
-			res.status(500).json({
-				error: "Failed to generate digest. Is Claude Code installed and logged in?",
-			});
-		}
-	});
-
-	app.get("/api/sessions", (_req, res) => {
-		res.json(agent.listSessions());
-	});
-
-	app.delete("/api/sessions/:id", (req, res) => {
-		agent.clearSession(req.params.id);
-		res.json({ ok: true });
+	// Recent tool invocations (newest first) — live activity feed for the Skills tab.
+	app.get("/api/tools/recent", (_req, res) => {
+		const calls: RecentToolCall[] = recentTools.list();
+		res.json(calls);
 	});
 
 	// Extension introspection (useful for the admin UI)
