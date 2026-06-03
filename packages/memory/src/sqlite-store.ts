@@ -22,13 +22,11 @@ export class SqliteStore implements MemoryStore {
 			CREATE TABLE IF NOT EXISTS profiles (
 				id TEXT PRIMARY KEY,
 				data TEXT NOT NULL,
-				created_at TEXT NOT NULL,
-				updated_at TEXT NOT NULL
+				created_at TEXT NOT NULL
 			);
 			CREATE TABLE IF NOT EXISTS states (
 				customer_id TEXT PRIMARY KEY,
-				data TEXT NOT NULL,
-				updated_at TEXT NOT NULL
+				data TEXT NOT NULL
 			);
 			CREATE TABLE IF NOT EXISTS history (
 				id TEXT PRIMARY KEY,
@@ -81,15 +79,8 @@ export class SqliteStore implements MemoryStore {
 
 	async upsertProfile(profile: CustomerProfile): Promise<void> {
 		this.db
-			.prepare(
-				"INSERT OR REPLACE INTO profiles (id, data, created_at, updated_at) VALUES (?, ?, ?, ?)",
-			)
-			.run(
-				profile.id,
-				JSON.stringify(profile),
-				profile.createdAt.toISOString(),
-				profile.updatedAt.toISOString(),
-			);
+			.prepare("INSERT OR REPLACE INTO profiles (id, data, created_at) VALUES (?, ?, ?)")
+			.run(profile.id, JSON.stringify(profile), profile.createdAt.toISOString());
 	}
 
 	async getState(customerId: string): Promise<CustomerState | null> {
@@ -102,8 +93,8 @@ export class SqliteStore implements MemoryStore {
 
 	async updateState(state: CustomerState): Promise<void> {
 		this.db
-			.prepare("INSERT OR REPLACE INTO states (customer_id, data, updated_at) VALUES (?, ?, ?)")
-			.run(state.customerId, JSON.stringify(state), state.updatedAt.toISOString());
+			.prepare("INSERT OR REPLACE INTO states (customer_id, data) VALUES (?, ?)")
+			.run(state.customerId, JSON.stringify(state));
 	}
 
 	async addHistory(entry: HistoryEntry): Promise<void> {
