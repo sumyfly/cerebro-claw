@@ -7,22 +7,11 @@ export interface StartupCheck {
 }
 
 export function runStartupChecks(config: ServerConfig): StartupCheck[] {
-	const runtimeCheck: StartupCheck =
-		config.runtime === "claude-code"
-			? {
-					name: "RUNTIME",
-					ok: true,
-					detail: `claude-code (subprocess: ${config.claudeBinary})`,
-				}
-			: {
-					name: "ANTHROPIC_API_KEY",
-					ok: config.anthropicApiKey.startsWith("sk-ant-"),
-					detail: config.anthropicApiKey
-						? config.anthropicApiKey.startsWith("sk-ant-")
-							? "set"
-							: "set but does not look like an Anthropic key (expected prefix sk-ant-)"
-						: "missing — chat and brain loop will not work",
-				};
+	const runtimeCheck: StartupCheck = {
+		name: "RUNTIME",
+		ok: true,
+		detail: `claude-code (subprocess: ${config.claudeBinary})`,
+	};
 
 	return [
 		runtimeCheck,

@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ToolDefinition } from "@cerebro-claw/shared";
-import type { AgentResponse } from "./agent-runtime.js";
+import type { AgentBackend, AgentResponse } from "./agent-backend.js";
 import { SYSTEM_PROMPT } from "./system-prompt.js";
 
 export interface BuildArgsInput {
@@ -41,20 +41,17 @@ export function buildClaudeArgs(input: BuildArgsInput): string[] {
 }
 
 /**
- * Alternative agent runtime that drives the `claude` CLI (Claude Code) as a
- * subprocess. Uses the user's Claude Code login — no ANTHROPIC_API_KEY needed.
+ * The agent runtime: drives the `claude` CLI (Claude Code) as a subprocess.
+ * Uses the user's Claude Code login — no ANTHROPIC_API_KEY needed.
  *
- * Tradeoffs vs the Anthropic SDK runtime:
  *  + No API key. Uses your Max/Pro subscription.
  *  + Inherits Claude Code's built-in file/bash tools.
  *  - Custom tools are exposed over the MCP endpoint (`--mcp-config`); the
  *    Cerebro system prompt is injected via `--append-system-prompt`.
  *  - Higher per-turn latency (subprocess startup).
  *  - Requires `claude` on PATH.
- *
- * Selected via RUNTIME=claude-code env var.
  */
-export class ClaudeCodeRuntime {
+export class ClaudeCodeRuntime implements AgentBackend {
 	private sessions = new Map<string, string>(); // our sessionId → Claude Code session_id
 	private model: string;
 	private claudeBinary: string;

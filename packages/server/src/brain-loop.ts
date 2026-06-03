@@ -1,5 +1,5 @@
 import type { ExtensionEvent, MemoryStore } from "@cerebro-claw/shared";
-import { type AgentBackend, friendlyAnthropicError } from "./agent-runtime.js";
+import type { AgentBackend } from "./agent-backend.js";
 import { cspToSnapshot, deriveHealthTrend } from "./engine/csp-snapshot.js";
 import { renderDecisionContext } from "./engine/decision-context.js";
 import { parseOverrideBand } from "./engine/overrides.js";
@@ -249,7 +249,7 @@ export class BrainLoop {
 
 	start(): void {
 		if (!this.enabled) {
-			console.log("[brain-loop] Disabled (no ANTHROPIC_API_KEY). Set it to enable proactive mode.");
+			console.log("[brain-loop] Disabled.");
 			return;
 		}
 		if (this.timer) return;
@@ -338,7 +338,8 @@ If nothing needs doing, say "No action needed for ${companyName}." and move on.`
 				console.log(`[brain-loop] ${companyName}: ${response.toolCalls.length} actions taken`);
 			}
 		} catch (err) {
-			console.error(`[brain-loop] Error evaluating ${companyName}: ${friendlyAnthropicError(err)}`);
+			const detail = err instanceof Error ? err.message : String(err);
+			console.error(`[brain-loop] Error evaluating ${companyName}: ${detail}`);
 		} finally {
 			// Persist this cycle's signal snapshot exactly once, after the review —
 			// never from buildSummary (which also runs in runDigest).

@@ -12,28 +12,27 @@ pnpm turbo build
 pnpm turbo dev
 ```
 
-Open <http://localhost:5173>. The Customers tab reads live from CSP once `CSP_TOKEN` + `CSP_CSM_EMAIL` are set (see section 3); without them it's empty. The agent is offline until you add an LLM key (next section), but everything else works.
+Open <http://localhost:5173>. The Customers tab reads live from CSP once `CSP_TOKEN` + `CSP_CSM_EMAIL` are set (see section 3); without them it's empty. The agent needs Claude Code (next section) to think, but everything else works.
 
-## 2a. Use your Claude Code subscription (no API key)
+## 2. Run the agent on your Claude Code login (no API key)
 
-If you already have Claude Code installed and logged in, you can run the agent
-through your existing subscription instead of using an API key. **Custom tools
-work — the server exposes them via MCP, the Claude Code subprocess discovers
-them automatically.** This is the Paseo pattern.
+The agent runs through the `claude` CLI (Claude Code) — your existing Max/Pro
+subscription, no Anthropic API key. **Custom tools work — the server exposes
+them via MCP, the Claude Code subprocess discovers them automatically.** This is
+the Paseo pattern.
 
-```
-RUNTIME=claude-code
-```
+Install the `claude` CLI and log in. If it's on your PATH there's nothing to
+configure; otherwise point at it with `CLAUDE_BINARY=/path/to/claude` in `.env`.
 
-Restart. The startup banner should show `RUNTIME claude-code` and the log
-will print `MCP config: ... (N tools exposed)`.
+Restart. The startup banner should show `RUNTIME claude-code (subprocess: claude)`
+and the log will print `MCP config: ... (N tools exposed)`.
 
 Mechanics: the server runs an HTTP MCP endpoint at `/mcp`. When we spawn
 `claude` for a chat turn, we pass `--mcp-config <temp-file>` pointing at
 that endpoint plus `--allowed-tools mcp__cerebro-claw__*` so the subprocess
 auto-approves our tools. No permission prompts, no per-token billing.
 
-Tradeoffs vs the API-key path:
+Characteristics:
 - ✅ No per-token billing — uses your Max/Pro subscription
 - ✅ All custom tools work (csp_*, memory_*, draft_message, send_message, bash)
 - ❌ Higher per-turn latency (subprocess spawn + first-call TLS handshake;
@@ -41,21 +40,13 @@ Tradeoffs vs the API-key path:
 - ❌ The agent identifies as Claude Code rather than a CSM-flavored persona;
   the `--append-system-prompt` injection is additive, not a full override.
 
-## 2b. Add Anthropic API key (makes the agent think with full tools)
-
-Get a key from <https://console.anthropic.com>. Add to `.env`:
-
-```
-ANTHROPIC_API_KEY=sk-ant-...
-```
-
-Restart the server. Check:
+Check it's wired up:
 
 ```bash
 curl http://localhost:3000/api/diagnostics
 ```
 
-Should show `"anthropic": { "ok": true }`. Now chat with the agent in the web UI — pick a customer, ask "what's going on with Globex?" — it'll use the memory tools to look up the customer and respond with real context.
+Should show `"runtime": { "ok": true, "detail": "claude-code: CLI ready" }`. Now chat with the agent in the web UI — pick a customer, ask "what's going on with Globex?" — it'll use the memory tools to look up the customer and respond with real context.
 
 ## 3. Add Lark (makes the agent reachable)
 
@@ -100,7 +91,7 @@ You should see:
 ```json
 {
   "database": { "ok": true, "detail": "responsive" },
-  "anthropic": { "ok": true, "detail": "reachable" },
+  "runtime": { "ok": true, "detail": "claude-code: CLI ready" },
   "lark": { "ok": true, "detail": "credentials configured" }
 }
 ```
@@ -110,9 +101,9 @@ You should see:
 | Problem | Check |
 |---|---|
 | Server won't start | Check the startup banner — it lists exactly what's missing |
-| Anthropic errors in console | `curl /api/diagnostics` to see the actual reason (invalid key, rate limit, etc.) |
+| Agent errors in console | `curl /api/diagnostics` to see the actual reason; confirm `claude` is on PATH and logged in |
+| `claude` not found | Install the Claude Code CLI and log in, or set `CLAUDE_BINARY` to its absolute path |
 | Lark webhook not firing | Confirm the URL is publicly reachable; check event subscriptions are enabled |
-| Brain loop doesn't run | Set `ANTHROPIC_API_KEY` — the loop disables itself without it |
 | Customers tab is empty | Set `CSP_TOKEN` + `CSP_CSM_EMAIL` so it reads the live CSP portfolio |
 
 ## Adding your own extensions

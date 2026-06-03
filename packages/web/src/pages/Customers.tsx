@@ -111,7 +111,10 @@ export function Customers() {
 		} catch {
 			setChatHistory((h) => [
 				...h,
-				{ role: "assistant", text: "Error: Could not reach the agent. Is ANTHROPIC_API_KEY set?" },
+				{
+					role: "assistant",
+					text: "Error: Could not reach the agent. Is Claude Code installed and logged in?",
+				},
 			]);
 		}
 		setChatLoading(false);

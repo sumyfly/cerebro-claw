@@ -11,15 +11,12 @@ describe("App integration", () => {
 	let shutdown: () => Promise<void>;
 	let tmpDir: string;
 	let prevDbPath: string | undefined;
-	let prevAnthropicKey: string | undefined;
 
 	beforeAll(async () => {
 		tmpDir = mkdtempSync(join(tmpdir(), "app-int-"));
 		prevDbPath = process.env.DB_PATH;
-		prevAnthropicKey = process.env.ANTHROPIC_API_KEY;
-		// Use an isolated DB and an obviously-fake key so we don't hit the network.
+		// Use an isolated DB so we don't touch the real one.
 		process.env.DB_PATH = join(tmpDir, "test.db");
-		process.env.ANTHROPIC_API_KEY = "fake-key-for-tests";
 
 		const handles = await createApp();
 		app = handles.app;
@@ -30,8 +27,6 @@ describe("App integration", () => {
 		await shutdown();
 		if (prevDbPath !== undefined) process.env.DB_PATH = prevDbPath;
 		else delete process.env.DB_PATH;
-		if (prevAnthropicKey !== undefined) process.env.ANTHROPIC_API_KEY = prevAnthropicKey;
-		else delete process.env.ANTHROPIC_API_KEY;
 		rmSync(tmpDir, { recursive: true, force: true });
 	});
 

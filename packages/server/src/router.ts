@@ -1,5 +1,5 @@
 import type { InboundMessage, MemoryStore } from "@cerebro-claw/shared";
-import type { AgentBackend } from "./agent-runtime.js";
+import type { AgentBackend } from "./agent-backend.js";
 
 export interface SessionRoute {
 	customerId: string;

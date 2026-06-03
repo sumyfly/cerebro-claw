@@ -2,11 +2,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_ALLOWLIST } from "@cerebro-claw/tools";
 
-export type RuntimeKind = "anthropic" | "claude-code";
-
 export interface ServerConfig {
 	port: number;
-	anthropicApiKey: string;
 	larkAppId: string;
 	larkAppSecret: string;
 	brainLoopIntervalMs: number;
@@ -17,7 +14,6 @@ export interface ServerConfig {
 	extensionsDir: string;
 	adminToken: string;
 	larkVerificationToken: string;
-	runtime: RuntimeKind;
 	claudeBinary: string;
 	defaultCsmLarkUserId: string;
 	dispatcherIntervalMs: number;
@@ -35,7 +31,6 @@ export function loadConfig(): ServerConfig {
 
 	return {
 		port: Number(process.env.PORT ?? 3000),
-		anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",
 		larkAppId: process.env.LARK_APP_ID ?? "",
 		larkAppSecret: process.env.LARK_APP_SECRET ?? "",
 		brainLoopIntervalMs: Number(process.env.BRAIN_LOOP_INTERVAL_MS ?? 300_000),
@@ -46,7 +41,6 @@ export function loadConfig(): ServerConfig {
 		extensionsDir: process.env.EXTENSIONS_DIR ?? join(process.cwd(), "extensions"),
 		adminToken: process.env.ADMIN_TOKEN ?? "",
 		larkVerificationToken: process.env.LARK_VERIFICATION_TOKEN ?? "",
-		runtime: process.env.RUNTIME === "claude-code" ? "claude-code" : "anthropic",
 		claudeBinary: process.env.CLAUDE_BINARY ?? "claude",
 		defaultCsmLarkUserId: process.env.DEFAULT_CSM_LARK_USER_ID ?? "",
 		dispatcherIntervalMs: Number(process.env.DISPATCHER_INTERVAL_MS ?? 60_000),

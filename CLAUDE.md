@@ -41,7 +41,7 @@ Every call lands in the **action ledger** (SQLite `action_ledger` table). The di
 - **Monorepo:** Turborepo + pnpm workspaces
 - **Backend:** Express 5
 - **Frontend:** React 19 + Ant Design 5
-- **Agent runtimes:** Anthropic SDK (production) or Claude Code subprocess (via MCP, no API key needed)
+- **Agent runtime:** Claude Code subprocess (via MCP, runs on your Claude Code login — no API key needed)
 - **LLM access via MCP:** `@modelcontextprotocol/sdk` HTTP server exposes our tools to any MCP client
 - **Memory:** SQLite (`better-sqlite3`) for agent-private notes, pending actions, and the action ledger; CSP is the source of truth for customer data
 - **Channels:** Lark IM to the CSM (signature-verified webhook, interactive approval cards) + `CustomerChannel` interface for customer-facing sends (`StubCustomerChannel` by default)
@@ -73,7 +73,7 @@ Every call lands in the **action ledger** (SQLite `action_ledger` table). The di
 
 ## Architecture — eight modules
 
-1. **Agent Runtime** — `AgentBackend` interface implemented by `AgentRuntime` (Anthropic SDK, in-process tool calls) and `ClaudeCodeRuntime` (spawns `claude` with `--mcp-config` so the subprocess calls our tools over MCP — no Anthropic key needed).
+1. **Agent Runtime** — `AgentBackend` interface implemented by `ClaudeCodeRuntime` (spawns `claude` with `--mcp-config` so the subprocess calls our tools over MCP — no Anthropic key needed). The interface keeps the runtime swappable, but Claude Code is the only implementation.
 2. **Customer Memory** — `MemoryStore` interface, SQLite-backed in production. Four conceptual layers (profile, state, history, instinct) but profile/state are mostly delegated to CSP now; SQLite keeps agent-private observations.
 3. **Action Ledger** — `ActionLedger` interface, SQLite-backed. Every act/notify/escalate/prep lands here. The digest reads from it; the dispatcher reads from it; the dashboard counters read from it.
 4. **Brain Loop** — runs `agent.prompt()` per account each cycle. Pluggable `AccountSource`: `createLocalAccountSource(store)` for demo seed, `createCspAccountSource({…})` to iterate the CSM's real CSP portfolio.
@@ -82,9 +82,9 @@ Every call lands in the **action ledger** (SQLite `action_ledger` table). The di
 7. **Tool Layer** — every tool is a `ToolDefinition { name, description, parameters (JSON Schema), execute }`. Categories: memory tools, action-policy tools (act/notify/escalate/prep/cancel/resolve), message tools (legacy draft → CSP card flow), bash tool. External extensions add more (csp-connector adds 9).
 8. **Extension Layer** — `ExtensionHost` loads built-ins + any factory in `extensions/`. Extensions register tools, channels, lifecycle event handlers. Filesystem loader (`extension-loader.ts`) scans `EXTENSIONS_DIR` at boot.
 
-## How Claude Code mode works (no API key)
+## How the runtime works (no API key)
 
-Pattern borrowed from Paseo. Server runs an HTTP MCP endpoint at `POST /mcp`. When `ClaudeCodeRuntime` spawns `claude`, it:
+The agent runs entirely on Claude Code — no `ANTHROPIC_API_KEY`. Pattern borrowed from Paseo. Server runs an HTTP MCP endpoint at `POST /mcp`. When `ClaudeCodeRuntime` spawns `claude`, it:
 
 1. Writes a one-line MCP config file to `tmpdir` referencing `http://127.0.0.1:{port}/mcp`
 2. Passes `--mcp-config <path>` and `--allowed-tools mcp__cerebro-claw__*` to suppress per-call approval prompts
@@ -93,14 +93,9 @@ Pattern borrowed from Paseo. Server runs an HTTP MCP endpoint at `POST /mcp`. Wh
 
 Verified end-to-end against CSP: chat turn "What is the health status of 16chillgrill?" runs in ~60s, agent calls `csp_get_account`/`csp_get_health_score`/`csp_get_engagement` over MCP, produces a CSM-grade brief with real data.
 
-## Runtime selection
+## Runtime
 
-Set `RUNTIME=anthropic` (default) or `RUNTIME=claude-code`. Both use the same `host.getTools()` surface — only how they reach Claude differs.
-
-| Runtime | Inference auth | Tool transport | First-turn latency | Persona |
-|---|---|---|---|---|
-| `anthropic` | `ANTHROPIC_API_KEY` | In-process function call | ~5-10s | CSM-flavored via system prompt |
-| `claude-code` | Your Claude Code login | HTTP MCP server | ~60s (subprocess + TLS) | Mixed — Claude Code base + `--append-system-prompt` add-on |
+There is one runtime: Claude Code. Inference auth is your Claude Code login; tools reach the subprocess over the HTTP MCP server; first-turn latency is ~60s (subprocess + TLS); the persona is Claude Code's base plus the Cerebro system prompt injected via `--append-system-prompt`. Configure the binary with `CLAUDE_BINARY` (default `claude`) and the model with `MODEL`.
 
 ## CSP integration
 
@@ -144,8 +139,8 @@ See `.env.example` for the full list. The important ones:
 
 | Variable | Used by |
 |---|---|
-| `ANTHROPIC_API_KEY` | Anthropic runtime |
-| `RUNTIME=claude-code` | Switches to subprocess + MCP, no API key needed |
+| `CLAUDE_BINARY` | Path to the `claude` CLI the runtime spawns (default `claude`) |
+| `MODEL` | Model the Claude Code subprocess runs with |
 | `CSP_BASE_URL`, `CSP_TOKEN`, `CSP_CSM_EMAIL` | csp-connector + brain loop's CSP account source |
 | `LARK_APP_ID`, `LARK_APP_SECRET`, `LARK_VERIFICATION_TOKEN` | Lark channel |
 | `DEFAULT_CSM_LARK_USER_ID` | Where approval cards go when a customer has no `csmLarkUserId` set |

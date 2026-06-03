@@ -11,7 +11,7 @@ import type {
 import { StubCustomerChannel } from "@cerebro-claw/tools";
 import express, { type Express } from "express";
 import { createActionObserver } from "./action-observer.js";
-import { type AgentBackend, AgentRuntime } from "./agent-runtime.js";
+import type { AgentBackend } from "./agent-backend.js";
 import { createAdminAuth } from "./auth.js";
 import { BrainLoop, createCspAccountSource } from "./brain-loop.js";
 import { createActionPolicyExtension } from "./builtin-extensions/action-policy-extension.js";
@@ -157,17 +157,19 @@ export async function createApp(): Promise<AppHandles> {
 		}),
 	);
 
-	// Agent runtime — Anthropic SDK (default) or Claude Code subprocess
+	// Agent runtime — Claude Code subprocess, reached over the MCP endpoint above.
 	const mcpUrl = `http://127.0.0.1:${config.port}/mcp`;
-	const agent: AgentBackend =
-		config.runtime === "claude-code"
-			? new ClaudeCodeRuntime(config.model, host.getTools(), config.claudeBinary, mcpUrl)
-			: new AgentRuntime(config.anthropicApiKey, config.model, host.getTools());
-	console.log(`[runtime] Using ${config.runtime}`);
+	const agent: AgentBackend = new ClaudeCodeRuntime(
+		config.model,
+		host.getTools(),
+		config.claudeBinary,
+		mcpUrl,
+	);
+	console.log("[runtime] Using claude-code");
 
 	// Router and brain loop (brain loop emits lifecycle events through the host)
 	const router = new Router(agent, { store });
-	const brainLoopEnabled = config.runtime === "claude-code" ? true : !!config.anthropicApiKey;
+	const brainLoopEnabled = true;
 
 	// Pick account source: CSP (live) when CSP_TOKEN + CSP_CSM_EMAIL are configured,
 	// otherwise fall back to the local SQLite store (demo / seed mode).
@@ -416,7 +418,9 @@ export async function createApp(): Promise<AppHandles> {
 			const digest = await brainLoop.runDigest();
 			res.json({ text: digest });
 		} catch (err) {
-			res.status(500).json({ error: "Failed to generate digest. Is ANTHROPIC_API_KEY set?" });
+			res.status(500).json({
+				error: "Failed to generate digest. Is Claude Code installed and logged in?",
+			});
 		}
 	});
 
@@ -450,16 +454,9 @@ export async function createApp(): Promise<AppHandles> {
 			results.database = { ok: false, detail: String(err) };
 		}
 
-		// Runtime (Anthropic SDK or Claude Code CLI)
-		if (config.runtime === "claude-code") {
-			const ping = await agent.ping();
-			results.runtime = { ok: ping.ok, detail: ping.ok ? "claude-code: CLI ready" : ping.error };
-		} else if (!config.anthropicApiKey) {
-			results.runtime = { ok: false, detail: "anthropic: ANTHROPIC_API_KEY not set" };
-		} else {
-			const ping = await agent.ping();
-			results.runtime = { ok: ping.ok, detail: ping.ok ? "anthropic: reachable" : ping.error };
-		}
+		// Runtime (Claude Code CLI)
+		const ping = await agent.ping();
+		results.runtime = { ok: ping.ok, detail: ping.ok ? "claude-code: CLI ready" : ping.error };
 
 		// Lark
 		if (!config.larkAppId || !config.larkAppSecret) {

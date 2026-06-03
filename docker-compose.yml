@@ -7,7 +7,7 @@ services:
       PORT: 3000
       DB_PATH: /data/cerebro-claw.db
       EXTENSIONS_DIR: /app/extensions
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CLAUDE_BINARY: ${CLAUDE_BINARY:-claude}
       LARK_APP_ID: ${LARK_APP_ID:-}
       LARK_APP_SECRET: ${LARK_APP_SECRET:-}
       LARK_VERIFICATION_TOKEN: ${LARK_VERIFICATION_TOKEN:-}
