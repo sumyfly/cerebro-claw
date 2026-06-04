@@ -1,10 +1,11 @@
-import type { ExtensionEvent, MemoryStore } from "@cerebro-claw/shared";
+import type { ActionLedger, ExtensionEvent, MemoryStore, TaskSource } from "@cerebro-claw/shared";
 import type { AgentBackend } from "./agent-backend.js";
 import { cspToSnapshot, deriveHealthTrend } from "./engine/csp-snapshot.js";
 import { renderDecisionContext } from "./engine/decision-context.js";
 import { parseOverrideBand } from "./engine/overrides.js";
 import { type AccountSnapshot, computeSignals } from "./engine/signals.js";
-import { BAND_GUIDANCE, reviewPointer } from "./review-prompt.js";
+import { renderTaskContext } from "./engine/task-context.js";
+import { BAND_GUIDANCE, TASK_GUIDANCE, reviewPointer } from "./review-prompt.js";
 
 export interface EventEmitter {
 	emit<T = unknown>(event: ExtensionEvent, payload: T): Promise<void>;
@@ -229,6 +230,8 @@ export class BrainLoop {
 	private enabled: boolean;
 	private emitter: EventEmitter | null;
 	private source: AccountSource;
+	private taskSource: TaskSource | null;
+	private ledger: ActionLedger | null;
 
 	constructor(
 		store: MemoryStore,
@@ -237,6 +240,8 @@ export class BrainLoop {
 		enabled = true,
 		emitter: EventEmitter | null = null,
 		source?: AccountSource,
+		taskSource: TaskSource | null = null,
+		ledger: ActionLedger | null = null,
 	) {
 		this.store = store;
 		this.agent = agent;
@@ -244,6 +249,8 @@ export class BrainLoop {
 		this.enabled = enabled;
 		this.emitter = emitter;
 		this.source = source ?? createLocalAccountSource(store);
+		this.taskSource = taskSource;
+		this.ledger = ledger;
 	}
 
 	start(): void {
@@ -276,14 +283,21 @@ export class BrainLoop {
 		await this.emitter?.emit("brain_loop_cycle_start", { ts: Date.now() });
 
 		try {
+			// 1) Accounts — the change-detection sweep over the CSM's portfolio.
 			const accounts = await this.source.list();
 			if (accounts.length === 0) {
-				console.log("[brain-loop] No customers from source, nothing to do");
-				return;
+				console.log("[brain-loop] No customers from source");
 			}
-
 			for (const a of accounts) {
 				await this.evaluateCustomer(a.id, a.companyName);
+			}
+
+			// 2) Tasks — the CSM's actual work queue. Independent of accounts: an
+			// empty portfolio must not stop task work, and vice versa.
+			await this.cycleTasks();
+
+			if (accounts.length === 0 && !this.taskSource) {
+				console.log("[brain-loop] Nothing to do this cycle");
 			}
 		} catch (err) {
 			console.error("[brain-loop] Cycle error:", err);
@@ -291,6 +305,78 @@ export class BrainLoop {
 			this.running = false;
 			console.log("[brain-loop] Cycle complete");
 			await this.emitter?.emit("brain_loop_cycle_end", { ts: Date.now() });
+		}
+	}
+
+	/**
+	 * Iterate the CSM's open tasks and work each one. Tasks that already have an
+	 * open action in the ledger (a needs-csm escalation or an in-flight notify
+	 * tagged with the task id) are skipped — they're mid-flight, re-actioning
+	 * them would double-fire. This is the ledger task-id link doing dedup.
+	 */
+	private async cycleTasks(): Promise<void> {
+		if (!this.taskSource) return;
+		let tasks: Awaited<ReturnType<TaskSource["listOpen"]>>;
+		try {
+			tasks = await this.taskSource.listOpen();
+		} catch (err) {
+			console.error(`[brain-loop] Task list error: ${(err as Error).message}`);
+			return;
+		}
+		if (tasks.length === 0) {
+			console.log("[brain-loop] No open tasks");
+			return;
+		}
+
+		const inFlight = await this.tasksWithOpenActions();
+		let skipped = 0;
+		for (const task of tasks) {
+			if (inFlight.has(task.id)) {
+				skipped += 1;
+				continue;
+			}
+			await this.evaluateTask(task);
+		}
+		console.log(
+			`[brain-loop] Tasks: ${tasks.length - skipped} evaluated, ${skipped} skipped (mid-flight)`,
+		);
+	}
+
+	/** Task ids that already have an open (in-flight / needs-csm) ledger action. */
+	private async tasksWithOpenActions(): Promise<Set<string>> {
+		const ids = new Set<string>();
+		if (!this.ledger) return ids;
+		try {
+			for (const entry of await this.ledger.listOpen()) {
+				const taskId = (entry.payload as { taskId?: unknown } | undefined)?.taskId;
+				if (typeof taskId === "string") ids.add(taskId);
+			}
+		} catch (err) {
+			console.error(`[brain-loop] Ledger dedup scan failed: ${(err as Error).message}`);
+		}
+		return ids;
+	}
+
+	private async evaluateTask(task: { id: string; title: string }): Promise<void> {
+		const full = (await this.taskSource?.getContext(task.id)) ?? null;
+		const context = full
+			? renderTaskContext(full)
+			: `# Cerebro task\n- ${task.title} (id: ${task.id})`;
+
+		const prompt = `You have a task to work from the CSM's Cerebro queue.
+
+${context}
+
+${TASK_GUIDANCE}`;
+
+		try {
+			const response = await this.agent.prompt(prompt, undefined, `brain:task:${task.id}`);
+			if (response.toolCalls.length > 0) {
+				console.log(`[brain-loop] task ${task.id}: ${response.toolCalls.length} actions taken`);
+			}
+		} catch (err) {
+			const detail = err instanceof Error ? err.message : String(err);
+			console.error(`[brain-loop] Error evaluating task ${task.id}: ${detail}`);
 		}
 	}
 

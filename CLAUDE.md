@@ -54,9 +54,9 @@ Every call lands in the **action ledger** (SQLite `action_ledger` table). The di
 ```
 .
 ├── packages/
-│   ├── shared/          # Types: Customer, MemoryStore, ActionLedger, CustomerChannel, ChannelAdapter, ExtensionAPI, ToolDefinition
+│   ├── shared/          # Types: Customer, MemoryStore, ActionLedger, CustomerChannel, TaskSource, ChannelAdapter, ExtensionAPI, ToolDefinition
 │   ├── memory/          # In-memory + SQLite implementations of MemoryStore and ActionLedger
-│   ├── tools/           # memory tools, message tools, bash tool, action-policy tools (act/notify/escalate/prep), StubCustomerChannel
+│   ├── tools/           # memory tools, message tools, bash tool, action-policy tools (act/notify/escalate/prep), task tools, StubCustomerChannel, StubTaskSource
 │   ├── channel-lark/    # ChannelAdapter for Lark with card builder and HMAC signature verify
 │   ├── server/          # Express app, extension host, MCP server, brain loop, dispatcher, runtimes
 │   └── web/             # React + antd admin UI (Dashboard, Customers, Activity, Extensions)
@@ -79,7 +79,7 @@ Every call lands in the **action ledger** (SQLite `action_ledger` table). The di
 4. **Brain Loop** — runs `agent.prompt()` per account each cycle. Pluggable `AccountSource`: `createLocalAccountSource(store)` for demo seed, `createCspAccountSource({…})` to iterate the CSM's real CSP portfolio.
 5. **Dispatcher** — polls the ledger every 60s for due notify-then-act entries and sends them through the registered `CustomerChannel`. Failures are recorded back to the ledger (status `failed`, surfaced in the digest).
 6. **Channel Layer** — `ChannelAdapter` for CSM-facing channels (Lark today). `CustomerChannel` for the agent's outbound path to customers (`StubCustomerChannel` today; email/SMS to drop in later).
-7. **Tool Layer** — every tool is a `ToolDefinition { name, description, parameters (JSON Schema), execute }`. Categories: memory tools, action-policy tools (act/notify/escalate/prep/cancel/resolve), message tools (legacy draft → CSP card flow), bash tool. External extensions add more (csp-connector adds 9).
+7. **Tool Layer** — every tool is a `ToolDefinition { name, description, parameters (JSON Schema), execute }`. Categories: memory tools, action-policy tools (act/notify/escalate/prep/cancel/resolve), task tools (list/get/complete/block), message tools (legacy draft → CSP card flow), bash tool. External extensions add more (csp-connector adds 10).
 8. **Extension Layer** — `ExtensionHost` loads built-ins + any factory in `extensions/`. Extensions register tools, channels, lifecycle event handlers. Filesystem loader (`extension-loader.ts`) scans `EXTENSIONS_DIR` at boot.
 
 ## How the runtime works (no API key)
@@ -99,7 +99,7 @@ There is one runtime: Claude Code. Inference auth is your Claude Code login; too
 
 ## CSP integration
 
-`extensions/csp-connector/index.ts` exposes 9 tools that proxy directly to the CSP HTTP API:
+`extensions/csp-connector/index.ts` exposes 10 tools that proxy directly to the CSP HTTP API:
 
 | Tool | Endpoint |
 |---|---|
@@ -112,8 +112,27 @@ There is one runtime: Claude Code. Inference auth is your Claude Code login; too
 | `csp_delete_note` (write-back) | `POST /api/v1/notes/:id/delete` |
 | `csp_get_renewals` | `GET /api/v1/accounts/:id/renewals` |
 | `csp_get_renewal` | `GET /api/v1/renewals/:id` (UUID) |
+| `csp_update_renewal` (write-back) | `POST /api/v1/renewals/:id/update` (UUID) |
 
 Pure proxy — no local mirror of CSP data. Each call hits CSP live. Business IDs validated as 24-char hex; renewal IDs as UUID. 10s default timeout (`CSP_TIMEOUT_MS`). When `CSP_TOKEN` and `CSP_CSM_EMAIL` are set, the brain loop's account source switches to CSP automatically, and the admin UI's Customers tab reads live from CSP too (`csp-customers.ts`); otherwise both fall back to the local SQLite store. There is no demo seed — the local store only holds agent-private data (ledger, history, instincts).
+
+`csp_update_renewal` advances a renewal (status/playbook). If the API rejects a transition, the agent is guided to fall back to a note/escalation rather than forcing it.
+
+## Task autopilot
+
+The CSM's actual unit of work is a **task** — a CSP **CTA-derived** work item (e.g. the playbook `T-90 Renewal Reminder` tasks). The agent pulls the open task queue each cycle and works each one end-to-end through the four-band action policy, exactly like it does accounts.
+
+> **Two "Task" concepts, kept separate.** A *CSP Task* is the assignment (CTA-derived, templated, its own status lifecycle, and a due-date *PriorityBand*). The *agent's* work model is the four action bands + the ledger. CSP's PriorityBand (`Overdue`/`Due Today`/…) is **not** the agent's action band (`act/notify/escalate/prep`) — never map one to the other.
+
+- **`TaskSource`** (`@cerebro-claw/shared`): `listOpen()`, `getContext(id)`, `writeBack(id, outcome)`. `StubTaskSource` (`@cerebro-claw/tools`) is the in-memory dev/test queue; **`CspTaskSource`** (`packages/server/src/csp-task-source.ts`) is the live binding.
+- **CSP task API** (a CSP Task links to its account/renewal via its CTA):
+  - list: `GET /api/v1/tasks?scope=all&status=NOT_STARTED,IN_PROGRESS,BLOCKED`
+  - detail: `GET /api/v1/tasks/:id` → `cta.businessId`/`cta.renewalId`, `template.fields`, `customFields`
+  - complete (3 writes): `POST /tasks/:id/custom-fields` (required fields, e.g. `renewalSignal`) → `POST /csm-activities` (when `activityRequired`) → `POST /tasks/:id/update {status: COMPLETED|BLOCKED}`
+- **Task tools** (`createTaskTools`, built-in `task-tools` extension so they get ledger access): `task_list_open`, `task_get`, `task_complete`, `task_block`. Complete/block take `custom_fields` + `activity` for templated tasks, write back to CSP, AND record an `action_ledger` entry tagged with `payload.taskId` (failed write-back → entry flips to `failed`, surfaced in the digest).
+- **Brain loop** iterates tasks after accounts (independent: an empty portfolio doesn't stop task work). A task with an open ledger action tagged by its id is skipped (mid-flight dedup).
+- **Selection:** `TASK_SOURCE=csp` → live CSP (reuses `CSP_BASE_URL`/`CSP_TOKEN`, `TASK_SCOPE=all|mine`); `=stub` → in-memory queue; unset → task iteration skipped (logged).
+- **UI:** the ops console **Tasks** page polls `GET /api/tasks` (open tasks joined with the agent's recorded band + outcome).
 
 ## Commands
 
@@ -121,7 +140,7 @@ Pure proxy — no local mirror of CSP data. Each call hits CSP live. Business ID
 pnpm install                                # install
 pnpm turbo build                            # build all packages
 pnpm turbo dev                              # server + web in watch mode
-pnpm turbo test                             # run tests (190 across 4 packages)
+pnpm turbo test                             # run tests (287 across 4 packages)
 ```
 
 ## Conventions
@@ -142,6 +161,7 @@ See `.env.example` for the full list. The important ones:
 | `CLAUDE_BINARY` | Path to the `claude` CLI the runtime spawns (default `claude`) |
 | `MODEL` | Model the Claude Code subprocess runs with |
 | `CSP_BASE_URL`, `CSP_TOKEN`, `CSP_CSM_EMAIL` | csp-connector + brain loop's CSP account source |
+| `TASK_SOURCE`, `TASK_SCOPE`, `TASK_MAX` | task autopilot: `csp` (live, reuses `CSP_*`) / `stub` / unset=skip; scope `all`\|`mine` |
 | `LARK_APP_ID`, `LARK_APP_SECRET`, `LARK_VERIFICATION_TOKEN` | Lark channel |
 | `DEFAULT_CSM_LARK_USER_ID` | Where approval cards go when a customer has no `csmLarkUserId` set |
 | `ADMIN_TOKEN` | Bearer auth on `/api/*` (admin API is open without it — dev only) |

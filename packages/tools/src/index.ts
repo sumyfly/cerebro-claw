@@ -11,3 +11,7 @@ export { createActionPolicyTools } from "./action-policy-tools.js";
 export type { ActionPolicyToolsContext } from "./action-policy-tools.js";
 export { StubCsmChannel } from "./stub-csm-channel.js";
 export type { CsmInboxEntry } from "./stub-csm-channel.js";
+export { StubTaskSource } from "./stub-task-source.js";
+export type { StubTaskSourceOptions } from "./stub-task-source.js";
+export { createTaskTools } from "./task-tools.js";
+export type { TaskToolsContext } from "./task-tools.js";
