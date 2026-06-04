@@ -45,7 +45,7 @@
 
 - [x] 7.1 Add a task-queue view to the web ops console showing open tasks, assigned band, and recorded outcome (new `Tasks` page + nav item, polls `GET /api/tasks`).
 - [x] 7.2 Wire it to a read endpoint backed by the `TaskSource` + ledger (`GET /api/tasks`).
-- [ ] 7.3 Manual UI verification per `docs/ui-verification.md`.
+- [x] 7.3 Verified the live React Tasks page (ran the app with `TASK_SOURCE=stub`, brain loop off; confirmed lanes, band-colored spines, telemetry reflecting a real completed act). Reviewed against the console design language and collapsed to 2 lanes.
 
 ## 8. Backend binding (after backend confirmed)
 
