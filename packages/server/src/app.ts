@@ -2,8 +2,8 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { verifyLarkSignature } from "@cerebro-claw/channel-lark";
 import { SqliteActionLedger, SqliteStore } from "@cerebro-claw/memory";
-import type { ActionLedger, CustomerChannel, MemoryStore } from "@cerebro-claw/shared";
-import { StubCustomerChannel } from "@cerebro-claw/tools";
+import type { ActionLedger, CustomerChannel, MemoryStore, TaskSource } from "@cerebro-claw/shared";
+import { StubCustomerChannel, StubTaskSource } from "@cerebro-claw/tools";
 import express, { type Express } from "express";
 import { createActionObserver } from "./action-observer.js";
 import type { AgentBackend } from "./agent-backend.js";
@@ -13,8 +13,10 @@ import { createActionPolicyExtension } from "./builtin-extensions/action-policy-
 import { createBashToolExtension } from "./builtin-extensions/bash-tool-extension.js";
 import { createLarkExtension } from "./builtin-extensions/lark-extension.js";
 import { memoryToolsExtension } from "./builtin-extensions/memory-tools-extension.js";
+import { createTaskToolsExtension } from "./builtin-extensions/task-tools-extension.js";
 import { ClaudeCodeRuntime } from "./claude-code-runtime.js";
 import { loadConfig } from "./config.js";
+import { createCspTaskSource } from "./csp-task-source.js";
 import { computeDigestCounts, digestHeadline } from "./digest.js";
 import { NotifyThenActDispatcher } from "./dispatcher.js";
 import { resolveOverrideFromStore } from "./engine/overrides.js";
@@ -110,6 +112,37 @@ export async function createApp(): Promise<AppHandles> {
 		},
 	});
 
+	// Task source — the CSM's Cerebro work queue. Selection:
+	//   TASK_SOURCE=csp            → live CSP Task API (reuses CSP_BASE_URL/CSP_TOKEN)
+	//   TASK_SOURCE=stub           → in-memory demo queue (dev/demo)
+	//   TASK_API_BASE_URL set       → standalone task backend (not yet bound)
+	//   neither                     → task iteration skipped (logged)
+	let taskSource: TaskSource | null = null;
+	if (config.taskSource === "csp") {
+		if (process.env.CSP_TOKEN) {
+			taskSource = createCspTaskSource({
+				baseUrl: process.env.CSP_BASE_URL ?? "http://localhost:5656",
+				token: process.env.CSP_TOKEN,
+				scope: (process.env.TASK_SCOPE as "all" | "mine") ?? "all",
+				maxTasks: process.env.TASK_MAX ? Number(process.env.TASK_MAX) : undefined,
+			});
+			console.log(`[tasks] Using CspTaskSource (scope=${process.env.TASK_SCOPE ?? "all"})`);
+		} else {
+			console.warn("[tasks] TASK_SOURCE=csp but CSP_TOKEN is not set — task iteration skipped.");
+		}
+	} else if (config.taskSource === "stub") {
+		taskSource = new StubTaskSource();
+		console.log("[tasks] Using StubTaskSource (in-memory demo queue)");
+	} else if (config.taskApiBaseUrl) {
+		// A standalone (non-CSP) task backend would bind here behind the same
+		// TaskSource interface.
+		console.warn(
+			`[tasks] TASK_API_BASE_URL set (${config.taskApiBaseUrl}) but no standalone connector is bound — task iteration skipped. Use TASK_SOURCE=csp or =stub.`,
+		);
+	} else {
+		console.log("[tasks] No task source configured — task iteration skipped.");
+	}
+
 	// Load extensions: built-in first, then any from the extensions/ directory
 	const userExtensions = await loadExtensionsFromDir(config.extensionsDir);
 	await host.load([
@@ -128,6 +161,8 @@ export async function createApp(): Promise<AppHandles> {
 			allowlist: config.bashAllowlist,
 			timeoutMs: config.bashTimeoutMs,
 		}),
+		// Task tools only register when a task source is configured.
+		...(taskSource ? [createTaskToolsExtension({ source: taskSource, ledger })] : []),
 		lark.extension,
 		...userExtensions,
 	]);
@@ -174,9 +209,11 @@ export async function createApp(): Promise<AppHandles> {
 	);
 	console.log("[runtime] Using claude-code");
 
-	// Router and brain loop (brain loop emits lifecycle events through the host)
+	// Router and brain loop (brain loop emits lifecycle events through the host).
+	// BRAIN_LOOP_ENABLED=false keeps the API/UI up without spawning agent cycles
+	// (useful for UI work, or running the dashboard against live data read-only).
 	const router = new Router(agent, { store });
-	const brainLoopEnabled = true;
+	const brainLoopEnabled = !/^(0|false|no)$/i.test(process.env.BRAIN_LOOP_ENABLED ?? "");
 
 	// Pick account source: CSP (live) when CSP_TOKEN + CSP_CSM_EMAIL are configured,
 	// otherwise fall back to the local SQLite store (demo / seed mode).
@@ -200,6 +237,8 @@ export async function createApp(): Promise<AppHandles> {
 		brainLoopEnabled,
 		host,
 		cspSource,
+		taskSource,
+		ledger,
 	);
 
 	// Dispatcher — picks up due notify-then-act sends and pushes them through
@@ -311,6 +350,46 @@ export async function createApp(): Promise<AppHandles> {
 		const windowHours = Number(req.query.hours ?? 24);
 		const counts = await computeDigestCounts(ledger, new Date(), windowHours);
 		res.json({ headline: digestHeadline(counts), counts });
+	});
+
+	// Task queue for the ops console — open tasks joined with the agent's
+	// recorded outcome (band + status) from the ledger via the task-id tag.
+	app.get("/api/tasks", async (_req, res) => {
+		if (!taskSource) {
+			res.json({ configured: false, label: null, open: [], recentOutcomes: [] });
+			return;
+		}
+		const open = await taskSource.listOpen();
+		const since = new Date(Date.now() - 24 * 3600 * 1000);
+		const ledgerEntries = await ledger.listByWindow(since, new Date(Date.now() + 1));
+		// Index ledger entries by their task-id tag (latest wins).
+		const byTask = new Map<string, (typeof ledgerEntries)[number]>();
+		for (const e of ledgerEntries) {
+			const taskId = (e.payload as { taskId?: unknown } | undefined)?.taskId;
+			if (typeof taskId === "string") byTask.set(taskId, e);
+		}
+		res.json({
+			configured: true,
+			label: taskSource.label,
+			open: open.map((t) => {
+				const action = byTask.get(t.id);
+				return {
+					...t,
+					latestAction: action
+						? { band: action.band, status: action.status, summary: action.summary }
+						: null,
+				};
+			}),
+			recentOutcomes: ledgerEntries
+				.filter((e) => (e.payload as { taskId?: unknown } | undefined)?.taskId)
+				.map((e) => ({
+					taskId: (e.payload as { taskId?: string }).taskId,
+					band: e.band,
+					status: e.status,
+					summary: e.summary,
+					createdAt: e.createdAt,
+				})),
+		});
 	});
 
 	// Recent tool invocations (newest first) — live activity feed for the Skills tab.

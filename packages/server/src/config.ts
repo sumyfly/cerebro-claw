@@ -18,6 +18,14 @@ export interface ServerConfig {
 	defaultCsmLarkUserId: string;
 	dispatcherIntervalMs: number;
 	defaultPauseMinutes: number;
+	/** Task backend base URL. When unset (and TASK_SOURCE!=stub), task iteration is skipped. */
+	taskApiBaseUrl: string;
+	/** Task backend bearer token. */
+	taskApiToken: string;
+	/** CSM identity passed to the task backend (email/id). */
+	taskCsmEmail: string;
+	/** Force the in-memory StubTaskSource ("stub") regardless of TASK_API_*. Dev/demo. */
+	taskSource: string;
 }
 
 export function loadConfig(): ServerConfig {
@@ -45,5 +53,9 @@ export function loadConfig(): ServerConfig {
 		defaultCsmLarkUserId: process.env.DEFAULT_CSM_LARK_USER_ID ?? "",
 		dispatcherIntervalMs: Number(process.env.DISPATCHER_INTERVAL_MS ?? 60_000),
 		defaultPauseMinutes: Number(process.env.DEFAULT_PAUSE_MINUTES ?? 240),
+		taskApiBaseUrl: process.env.TASK_API_BASE_URL ?? "",
+		taskApiToken: process.env.TASK_API_TOKEN ?? "",
+		taskCsmEmail: process.env.TASK_CSM_EMAIL ?? "",
+		taskSource: process.env.TASK_SOURCE ?? "",
 	};
 }

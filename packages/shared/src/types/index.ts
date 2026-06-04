@@ -39,4 +39,14 @@ export type {
 
 export type { CustomerChannel } from "./customer-channel.js";
 
+export type {
+	TaskStatus,
+	TaskRecord,
+	TaskFieldSpec,
+	TaskOutcomeKind,
+	TaskActivity,
+	TaskOutcome,
+	TaskSource,
+} from "./task.js";
+
 export type { RecentToolCall } from "./recent-tool-call.js";

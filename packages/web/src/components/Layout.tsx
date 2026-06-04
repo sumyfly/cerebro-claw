@@ -1,6 +1,12 @@
 /** App shell: icon rail nav + persistent telemetry bar + scrollable content. */
 
-import { ApiOutlined, NodeIndexOutlined, SettingOutlined, StopOutlined } from "@ant-design/icons";
+import {
+	ApiOutlined,
+	CheckSquareOutlined,
+	NodeIndexOutlined,
+	SettingOutlined,
+	StopOutlined,
+} from "@ant-design/icons";
 import { type ReactNode, useEffect, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import type { DigestCounters } from "../lib/api.js";
@@ -17,6 +23,7 @@ interface NavItem {
 
 const NAV: NavItem[] = [
 	{ path: "/", label: "Pipeline", icon: <NodeIndexOutlined /> },
+	{ path: "/tasks", label: "Tasks", icon: <CheckSquareOutlined /> },
 	{ path: "/blocked", label: "Blocked", icon: <StopOutlined /> },
 	{ path: "/skills", label: "Intel", icon: <ApiOutlined /> },
 	{ path: "/settings", label: "Config", icon: <SettingOutlined /> },

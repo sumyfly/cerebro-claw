@@ -37,6 +37,34 @@ export interface ExtensionInfo {
 	tools: { name: string; description: string }[];
 }
 
+/** A task row in the ops console, joined with the agent's recorded outcome. */
+export interface TaskRow {
+	id: string;
+	title: string;
+	status: "open" | "in-progress" | "done" | "blocked";
+	description?: string;
+	businessId?: string;
+	customerName?: string;
+	renewalId?: string;
+	priority?: string;
+	latestAction: { band: Band; status: Status; summary: string } | null;
+}
+
+export interface TaskOutcomeRow {
+	taskId: string;
+	band: Band;
+	status: Status;
+	summary: string;
+	createdAt: string;
+}
+
+export interface TaskQueue {
+	configured: boolean;
+	label: string | null;
+	open: TaskRow[];
+	recentOutcomes: TaskOutcomeRow[];
+}
+
 export type Diagnostics = Record<string, { ok: boolean; detail?: string }>;
 
 /** Error carrying the HTTP status so callers can branch on it (e.g. 404). */
