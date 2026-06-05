@@ -72,3 +72,27 @@ export const TASK_GUIDANCE = [
 	"",
 	"Don't draft and wait — that's the bug, not the feature. Finish what you can; escalate what you must.",
 ].join("\n");
+
+/**
+ * Renewal-band guidance — the action-policy menu framed for a single renewal.
+ *
+ * A Renewal is the commercial object (Renewal → CTA → Task). The renewal sweep
+ * works the renewal itself on its timeline. Coordinate with task work through
+ * the shared renewal-risk Situation: don't repeat a step a task already owns,
+ * but DO act on renewal-level work no task covers, and open/advance the
+ * renewal-risk Situation so the storyline is one thread.
+ */
+export const RENEWAL_GUIDANCE = [
+	"This is a renewal from the CSM's portfolio — work it on the renewal timeline like a human CSM.",
+	"",
+	"1. First read the open situations above. If a renewal-risk Situation for THIS renewal is already in flight, advance it — don't re-discover. Otherwise open one (situation_open, kind 'renewal-risk', pass renewal_id) when the renewal warrants tracking.",
+	"2. Advance the RENEWAL'S OWN status/playbook with csp_update_renewal when a transition is warranted. This is the renewal level — it is NOT a task; do not write task status here.",
+	"3. If a step is already owned by an open task, leave it to the task sweep — don't double-work. Act only on renewal-level work no task covers.",
+	"4. Pick the band and CALL ITS TOOL (pass renewal_id / situation_id so the action joins the storyline):",
+	"   - act — reversible renewal-level observation/update (a CSP note, a renewal status nudge).",
+	"   - notify_then_send_to_customer — routine renewal nudge to the customer (heads-up to CSM first).",
+	"   - escalate — commercial concession / discount / churn save / contract change; brief the CSM.",
+	"   - prep — a finished renewal brief for a CSM-owned conversation.",
+	"",
+	"If the renewal is steady and nothing needs doing, don't call any tool — just say so.",
+].join("\n");

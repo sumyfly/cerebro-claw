@@ -1,4 +1,4 @@
-/** Pipeline — the agent's task stream as a control-room kanban.
+/** Activity — the agent's action stream (the ledger) as a control-room kanban.
  * Reads GET /api/ledger?since= (windowed), polls every 5s. Telemetry counters
  * come from the shared layout fetch (GET /api/digest/counters). */
 
@@ -102,7 +102,7 @@ export function Pipeline() {
 
 	return (
 		<>
-			<h1 className="cc-page-title">PIPELINE — AGENT TASK STREAM</h1>
+			<h1 className="cc-page-title">ACTIVITY — AGENT ACTION STREAM</h1>
 
 			<div className="cc-toolbar">
 				<div className="cc-seg">

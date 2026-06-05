@@ -1,11 +1,19 @@
-import type { ActionLedger, ExtensionEvent, MemoryStore, TaskSource } from "@cerebro-claw/shared";
+import type {
+	ActionLedger,
+	ExtensionEvent,
+	MemoryStore,
+	RenewalSource,
+	SituationStore,
+	TaskSource,
+} from "@cerebro-claw/shared";
 import type { AgentBackend } from "./agent-backend.js";
 import { cspToSnapshot, deriveHealthTrend } from "./engine/csp-snapshot.js";
-import { renderDecisionContext } from "./engine/decision-context.js";
+import { renderDecisionContext, renderSituations } from "./engine/decision-context.js";
 import { parseOverrideBand } from "./engine/overrides.js";
+import { renderRenewalContext } from "./engine/renewal-context.js";
 import { type AccountSnapshot, computeSignals } from "./engine/signals.js";
 import { renderTaskContext } from "./engine/task-context.js";
-import { BAND_GUIDANCE, TASK_GUIDANCE, reviewPointer } from "./review-prompt.js";
+import { BAND_GUIDANCE, RENEWAL_GUIDANCE, TASK_GUIDANCE, reviewPointer } from "./review-prompt.js";
 
 export interface EventEmitter {
 	emit<T = unknown>(event: ExtensionEvent, payload: T): Promise<void>;
@@ -88,6 +96,8 @@ export interface CspAccountSourceOptions {
 	maxAccounts?: number;
 	/** Memory store — supplies instinct notes + stored overrides for the signals. */
 	store?: MemoryStore;
+	/** Situation store — supplies open storylines so the agent advances, not re-discovers. */
+	situationStore?: SituationStore;
 	/** Clock override (tests). */
 	now?: () => Date;
 }
@@ -139,13 +149,13 @@ export function createCspAccountSource(opts: CspAccountSourceOptions): AccountSo
 					signal: ac.signal,
 				});
 				if (!res.ok) {
-					console.error(`[brain-loop] CSP list failed: HTTP ${res.status}`);
+					console.error(`[work-loop] CSP list failed: HTTP ${res.status}`);
 					return [];
 				}
 				const body = (await res.json()) as { data?: { id: string; name: string }[] };
 				return (body.data ?? []).map((a) => ({ id: a.id, companyName: a.name }));
 			} catch (err) {
-				console.error(`[brain-loop] CSP list error: ${(err as Error).message}`);
+				console.error(`[work-loop] CSP list error: ${(err as Error).message}`);
 				return [];
 			} finally {
 				clearTimeout(t);
@@ -193,10 +203,12 @@ export function createCspAccountSource(opts: CspAccountSourceOptions): AccountSo
 					healthScore: mapped.healthScore?.overallScore,
 				});
 				const context = renderDecisionContext(signals, instincts);
-				return `${context}\n\n${pointer}`;
+				const situations = opts.situationStore ? await opts.situationStore.listOpen(id) : [];
+				const situationBlock = renderSituations(situations, now);
+				return `${context}\n\n${situationBlock}\n\n${pointer}`;
 			} catch (err) {
 				console.error(
-					`[brain-loop] signal computation failed for ${companyName}: ${(err as Error).message}`,
+					`[work-loop] signal computation failed for ${companyName}: ${(err as Error).message}`,
 				);
 				return pointer;
 			}
@@ -232,6 +244,8 @@ export class BrainLoop {
 	private source: AccountSource;
 	private taskSource: TaskSource | null;
 	private ledger: ActionLedger | null;
+	private renewalSource: RenewalSource | null;
+	private situationStore: SituationStore | null;
 
 	constructor(
 		store: MemoryStore,
@@ -242,6 +256,8 @@ export class BrainLoop {
 		source?: AccountSource,
 		taskSource: TaskSource | null = null,
 		ledger: ActionLedger | null = null,
+		renewalSource: RenewalSource | null = null,
+		situationStore: SituationStore | null = null,
 	) {
 		this.store = store;
 		this.agent = agent;
@@ -251,15 +267,17 @@ export class BrainLoop {
 		this.source = source ?? createLocalAccountSource(store);
 		this.taskSource = taskSource;
 		this.ledger = ledger;
+		this.renewalSource = renewalSource;
+		this.situationStore = situationStore;
 	}
 
 	start(): void {
 		if (!this.enabled) {
-			console.log("[brain-loop] Disabled.");
+			console.log("[work-loop] Disabled.");
 			return;
 		}
 		if (this.timer) return;
-		console.log(`[brain-loop] Starting — cycle every ${this.intervalMs / 1000}s`);
+		console.log(`[work-loop] Starting — cycle every ${this.intervalMs / 1000}s`);
 		this.timer = setInterval(() => this.cycle(), this.intervalMs);
 		this.cycle();
 	}
@@ -269,24 +287,24 @@ export class BrainLoop {
 			clearInterval(this.timer);
 			this.timer = null;
 		}
-		console.log("[brain-loop] Stopped");
+		console.log("[work-loop] Stopped");
 	}
 
 	private async cycle(): Promise<void> {
 		if (this.running) {
-			console.log("[brain-loop] Previous cycle still running, skipping");
+			console.log("[work-loop] Previous cycle still running, skipping");
 			return;
 		}
 
 		this.running = true;
-		console.log(`[brain-loop] Cycle starting — source: ${this.source.label}`);
+		console.log(`[work-loop] Cycle starting — source: ${this.source.label}`);
 		await this.emitter?.emit("brain_loop_cycle_start", { ts: Date.now() });
 
 		try {
 			// 1) Accounts — the change-detection sweep over the CSM's portfolio.
 			const accounts = await this.source.list();
 			if (accounts.length === 0) {
-				console.log("[brain-loop] No customers from source");
+				console.log("[work-loop] No customers from source");
 			}
 			for (const a of accounts) {
 				await this.evaluateCustomer(a.id, a.companyName);
@@ -296,14 +314,18 @@ export class BrainLoop {
 			// empty portfolio must not stop task work, and vice versa.
 			await this.cycleTasks();
 
-			if (accounts.length === 0 && !this.taskSource) {
-				console.log("[brain-loop] Nothing to do this cycle");
+			// 3) Renewals — the highest-value, time-sensitive work, swept directly.
+			// Independent of accounts and tasks.
+			await this.cycleRenewals();
+
+			if (accounts.length === 0 && !this.taskSource && !this.renewalSource) {
+				console.log("[work-loop] Nothing to do this cycle");
 			}
 		} catch (err) {
-			console.error("[brain-loop] Cycle error:", err);
+			console.error("[work-loop] Cycle error:", err);
 		} finally {
 			this.running = false;
-			console.log("[brain-loop] Cycle complete");
+			console.log("[work-loop] Cycle complete");
 			await this.emitter?.emit("brain_loop_cycle_end", { ts: Date.now() });
 		}
 	}
@@ -320,11 +342,11 @@ export class BrainLoop {
 		try {
 			tasks = await this.taskSource.listOpen();
 		} catch (err) {
-			console.error(`[brain-loop] Task list error: ${(err as Error).message}`);
+			console.error(`[work-loop] Task list error: ${(err as Error).message}`);
 			return;
 		}
 		if (tasks.length === 0) {
-			console.log("[brain-loop] No open tasks");
+			console.log("[work-loop] No open tasks");
 			return;
 		}
 
@@ -338,7 +360,7 @@ export class BrainLoop {
 			await this.evaluateTask(task);
 		}
 		console.log(
-			`[brain-loop] Tasks: ${tasks.length - skipped} evaluated, ${skipped} skipped (mid-flight)`,
+			`[work-loop] Tasks: ${tasks.length - skipped} evaluated, ${skipped} skipped (mid-flight)`,
 		);
 	}
 
@@ -352,7 +374,7 @@ export class BrainLoop {
 				if (typeof taskId === "string") ids.add(taskId);
 			}
 		} catch (err) {
-			console.error(`[brain-loop] Ledger dedup scan failed: ${(err as Error).message}`);
+			console.error(`[work-loop] Ledger dedup scan failed: ${(err as Error).message}`);
 		}
 		return ids;
 	}
@@ -372,11 +394,68 @@ ${TASK_GUIDANCE}`;
 		try {
 			const response = await this.agent.prompt(prompt, undefined, `brain:task:${task.id}`);
 			if (response.toolCalls.length > 0) {
-				console.log(`[brain-loop] task ${task.id}: ${response.toolCalls.length} actions taken`);
+				console.log(`[work-loop] task ${task.id}: ${response.toolCalls.length} actions taken`);
 			}
 		} catch (err) {
 			const detail = err instanceof Error ? err.message : String(err);
-			console.error(`[brain-loop] Error evaluating task ${task.id}: ${detail}`);
+			console.error(`[work-loop] Error evaluating task ${task.id}: ${detail}`);
+		}
+	}
+
+	/**
+	 * Renewal sweep — iterate the CSM's open (upcoming/at-risk) renewals and work
+	 * each on its timeline. Independent of the account and task sweeps. Each
+	 * renewal converges on the single per-renewalId `renewal-risk` Situation.
+	 */
+	private async cycleRenewals(): Promise<void> {
+		if (!this.renewalSource) return;
+		let renewals: Awaited<ReturnType<RenewalSource["listOpen"]>>;
+		try {
+			renewals = await this.renewalSource.listOpen();
+		} catch (err) {
+			console.error(`[work-loop] Renewal list error: ${(err as Error).message}`);
+			return;
+		}
+		if (renewals.length === 0) {
+			console.log("[work-loop] No open renewals");
+			return;
+		}
+		for (const renewal of renewals) {
+			await this.evaluateRenewal(renewal.id);
+		}
+		console.log(`[work-loop] Renewals: ${renewals.length} evaluated`);
+	}
+
+	private async evaluateRenewal(id: string): Promise<void> {
+		const full = (await this.renewalSource?.getContext(id)) ?? null;
+		if (!full) {
+			console.error(`[work-loop] Renewal ${id} has no context — skipping`);
+			return;
+		}
+		const renewalContext = renderRenewalContext(full);
+		// Inject the account's open situations so the agent advances the renewal's
+		// storyline instead of re-discovering it (convergence by renewalId).
+		const situations = this.situationStore
+			? await this.situationStore.listOpen(full.businessId)
+			: [];
+		const situationBlock = renderSituations(situations, new Date());
+
+		const prompt = `You have a renewal to work from the CSM's portfolio.
+
+${renewalContext}
+
+${situationBlock}
+
+${RENEWAL_GUIDANCE}`;
+
+		try {
+			const response = await this.agent.prompt(prompt, undefined, `brain:renewal:${id}`);
+			if (response.toolCalls.length > 0) {
+				console.log(`[work-loop] renewal ${id}: ${response.toolCalls.length} actions taken`);
+			}
+		} catch (err) {
+			const detail = err instanceof Error ? err.message : String(err);
+			console.error(`[work-loop] Error evaluating renewal ${id}: ${detail}`);
 		}
 	}
 
@@ -394,11 +473,11 @@ If nothing needs doing, say "No action needed for ${companyName}." and move on.`
 		try {
 			const response = await this.agent.prompt(prompt, undefined, `brain:${customerId}`);
 			if (response.toolCalls.length > 0) {
-				console.log(`[brain-loop] ${companyName}: ${response.toolCalls.length} actions taken`);
+				console.log(`[work-loop] ${companyName}: ${response.toolCalls.length} actions taken`);
 			}
 		} catch (err) {
 			const detail = err instanceof Error ? err.message : String(err);
-			console.error(`[brain-loop] Error evaluating ${companyName}: ${detail}`);
+			console.error(`[work-loop] Error evaluating ${companyName}: ${detail}`);
 		} finally {
 			// Persist this cycle's signal snapshot exactly once, after the review —
 			// never from buildSummary (which may run several times per cycle).

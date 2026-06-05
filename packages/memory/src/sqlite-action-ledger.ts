@@ -20,6 +20,8 @@ interface Row {
 	executed_at: string | null;
 	payload: string | null;
 	note: string | null;
+	situation_id: string | null;
+	renewal_id: string | null;
 }
 
 export class SqliteActionLedger implements ActionLedger {
@@ -52,12 +54,23 @@ export class SqliteActionLedger implements ActionLedger {
 				execute_at TEXT,
 				executed_at TEXT,
 				payload TEXT,
-				note TEXT
+				note TEXT,
+				situation_id TEXT,
+				renewal_id TEXT
 			);
 			CREATE INDEX IF NOT EXISTS idx_ledger_created ON action_ledger(created_at);
 			CREATE INDEX IF NOT EXISTS idx_ledger_status ON action_ledger(status);
 			CREATE INDEX IF NOT EXISTS idx_ledger_execute_at ON action_ledger(execute_at);
 		`);
+		// Additive columns for pre-existing databases (idempotent).
+		for (const col of ["situation_id TEXT", "renewal_id TEXT"]) {
+			try {
+				this.db.exec(`ALTER TABLE action_ledger ADD COLUMN ${col}`);
+			} catch {
+				// Column already exists — ignore.
+			}
+		}
+		this.db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_situation ON action_ledger(situation_id)");
 	}
 
 	async record(
@@ -79,12 +92,14 @@ export class SqliteActionLedger implements ActionLedger {
 			executedAt: input.executedAt,
 			payload: input.payload,
 			note: input.note,
+			situationId: input.situationId,
+			renewalId: input.renewalId,
 		};
 		this.db
 			.prepare(
 				`INSERT INTO action_ledger
-				(id, band, customer_id, customer_name, summary, reason, status, created_at, execute_at, executed_at, payload, note)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				(id, band, customer_id, customer_name, summary, reason, status, created_at, execute_at, executed_at, payload, note, situation_id, renewal_id)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			)
 			.run(
 				entry.id,
@@ -99,6 +114,8 @@ export class SqliteActionLedger implements ActionLedger {
 				entry.executedAt?.toISOString() ?? null,
 				entry.payload ? JSON.stringify(entry.payload) : null,
 				entry.note ?? null,
+				entry.situationId ?? null,
+				entry.renewalId ?? null,
 			);
 		return entry;
 	}
@@ -180,6 +197,8 @@ export class SqliteActionLedger implements ActionLedger {
 			executedAt: row.executed_at ? new Date(row.executed_at) : undefined,
 			payload: row.payload ? JSON.parse(row.payload) : undefined,
 			note: row.note ?? undefined,
+			situationId: row.situation_id ?? undefined,
+			renewalId: row.renewal_id ?? undefined,
 		};
 	}
 }

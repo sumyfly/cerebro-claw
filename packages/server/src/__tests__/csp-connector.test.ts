@@ -19,6 +19,7 @@ function makeApi(env: Record<string, string> = {}): {
 		extensionId: "csp-connector",
 		registerTool: (t) => tools.set(t.name, t),
 		registerChannel: () => undefined,
+		registerBand: () => undefined,
 		on: () => undefined,
 		getStore: () => ({}) as never,
 		getConfig: () => ({}),

@@ -1,9 +1,16 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { verifyLarkSignature } from "@cerebro-claw/channel-lark";
-import { SqliteActionLedger, SqliteStore } from "@cerebro-claw/memory";
-import type { ActionLedger, CustomerChannel, MemoryStore, TaskSource } from "@cerebro-claw/shared";
-import { StubCustomerChannel, StubTaskSource } from "@cerebro-claw/tools";
+import { SqliteActionLedger, SqliteSituationStore, SqliteStore } from "@cerebro-claw/memory";
+import type {
+	ActionLedger,
+	CustomerChannel,
+	MemoryStore,
+	RenewalSource,
+	SituationStore,
+	TaskSource,
+} from "@cerebro-claw/shared";
+import { StubCustomerChannel, StubRenewalSource, StubTaskSource } from "@cerebro-claw/tools";
 import express, { type Express } from "express";
 import { createActionObserver } from "./action-observer.js";
 import type { AgentBackend } from "./agent-backend.js";
@@ -13,9 +20,11 @@ import { createActionPolicyExtension } from "./builtin-extensions/action-policy-
 import { createBashToolExtension } from "./builtin-extensions/bash-tool-extension.js";
 import { createLarkExtension } from "./builtin-extensions/lark-extension.js";
 import { memoryToolsExtension } from "./builtin-extensions/memory-tools-extension.js";
+import { createSituationToolsExtension } from "./builtin-extensions/situation-tools-extension.js";
 import { createTaskToolsExtension } from "./builtin-extensions/task-tools-extension.js";
 import { ClaudeCodeRuntime } from "./claude-code-runtime.js";
 import { loadConfig } from "./config.js";
+import { createCspRenewalSource } from "./csp-renewal-source.js";
 import { createCspTaskSource } from "./csp-task-source.js";
 import { computeDigestCounts, digestHeadline } from "./digest.js";
 import { NotifyThenActDispatcher } from "./dispatcher.js";
@@ -63,6 +72,9 @@ export async function createApp(): Promise<AppHandles> {
 
 	// Action ledger — every act / notify / escalate / prep lands here
 	const ledger: ActionLedger = new SqliteActionLedger(config.dbPath);
+
+	// Situation store — persistent storylines so the agent advances, not re-discovers
+	const situationStore: SituationStore = new SqliteSituationStore(config.dbPath);
 
 	// The CSP test backend serves an untrusted/expired TLS cert, which Node's
 	// fetch rejects. CSP_INSECURE_TLS is the opt-in escape hatch for dev/test.
@@ -143,6 +155,32 @@ export async function createApp(): Promise<AppHandles> {
 		console.log("[tasks] No task source configured — task iteration skipped.");
 	}
 
+	// Renewal source — upcoming/at-risk renewals as a first-class swept input.
+	//   RENEWAL_SOURCE=csp   → derive from accounts + per-account renewals (window-filtered)
+	//   RENEWAL_SOURCE=stub  → in-memory demo queue
+	//   unset                → renewal sweep skipped (logged)
+	let renewalSource: RenewalSource | null = null;
+	if (config.renewalSource === "csp") {
+		if (process.env.CSP_TOKEN && process.env.CSP_CSM_EMAIL) {
+			renewalSource = createCspRenewalSource({
+				baseUrl: process.env.CSP_BASE_URL ?? "http://localhost:5656",
+				token: process.env.CSP_TOKEN,
+				csmEmail: process.env.CSP_CSM_EMAIL,
+				windowDays: config.renewalWindowDays,
+			});
+			console.log(`[renewals] Using CspRenewalSource (window=${config.renewalWindowDays}d)`);
+		} else {
+			console.warn(
+				"[renewals] RENEWAL_SOURCE=csp but CSP_TOKEN/CSP_CSM_EMAIL not set — renewal sweep skipped.",
+			);
+		}
+	} else if (config.renewalSource === "stub") {
+		renewalSource = new StubRenewalSource();
+		console.log("[renewals] Using StubRenewalSource (in-memory demo queue)");
+	} else {
+		console.log("[renewals] No renewal source configured — renewal sweep skipped.");
+	}
+
 	// Load extensions: built-in first, then any from the extensions/ directory
 	const userExtensions = await loadExtensionsFromDir(config.extensionsDir);
 	await host.load([
@@ -161,6 +199,7 @@ export async function createApp(): Promise<AppHandles> {
 			allowlist: config.bashAllowlist,
 			timeoutMs: config.bashTimeoutMs,
 		}),
+		createSituationToolsExtension({ store: situationStore }),
 		// Task tools only register when a task source is configured.
 		...(taskSource ? [createTaskToolsExtension({ source: taskSource, ledger })] : []),
 		lark.extension,
@@ -227,6 +266,7 @@ export async function createApp(): Promise<AppHandles> {
 						? Number(process.env.CSP_MAX_ACCOUNTS)
 						: undefined,
 					store,
+					situationStore,
 				})
 			: undefined;
 
@@ -239,6 +279,8 @@ export async function createApp(): Promise<AppHandles> {
 		cspSource,
 		taskSource,
 		ledger,
+		renewalSource,
+		situationStore,
 	);
 
 	// Dispatcher — picks up due notify-then-act sends and pushes them through
@@ -445,6 +487,8 @@ export async function createApp(): Promise<AppHandles> {
 		dispatcher.stop();
 		await host.shutdown();
 		if (ledger instanceof SqliteActionLedger) (ledger as SqliteActionLedger).close();
+		if (situationStore instanceof SqliteSituationStore)
+			(situationStore as SqliteSituationStore).close();
 		if (store instanceof SqliteStore) (store as SqliteStore).close();
 	};
 

@@ -31,6 +31,9 @@ Every call lands in the **action ledger** (SQLite `action_ledger` table). The di
 ## Source docs
 
 - **Goal + action policy:** `docs/csm-ai-colleague-product-vision.md` (read this first)
+- **Architecture (the loop):** `docs/architecture.md` — Perceive → Decide → Act → Remember
+- **Canonical vocabulary:** `docs/glossary.md` — one concept, one name (Activity ≠ Task; Work Loop; the four status concepts)
+- **Extending (the seams):** `docs/extending.md` — to do X, implement Y
 - **Work inventory (33 CSM work types classified):** `docs/work-inventory.md`
 - **Setup:** `docs/setup.md`
 - **UI verification workflow:** `docs/ui-verification.md`
@@ -71,7 +74,9 @@ Every call lands in the **action ledger** (SQLite `action_ledger` table). The di
 └── Dockerfile + docker-compose.yml
 ```
 
-## Architecture — eight modules
+## Architecture — the loop
+
+The system is one crank turned each cycle: **Perceive → Decide → Act → Remember** (see `docs/architecture.md`). The **Work Loop** (class `BrainLoop`) iterates three inputs independently — the **account sweep**, **task sweep**, and **renewal sweep**. *Perceive* builds context from CSP signals + the subject's open **Situations**; *Decide* is the agent picking a band (the policy is a registered set, `ExtensionHost.getBands()`); *Act* is the band's tool + the dispatcher; *Remember* is the ledger (Activity) + instincts + **Situations** (the storyline that stops cross-cycle re-discovery). The modules below implement those phases.
 
 1. **Agent Runtime** — `AgentBackend` interface implemented by `ClaudeCodeRuntime` (spawns `claude` with `--mcp-config` so the subprocess calls our tools over MCP — no Anthropic key needed). The interface keeps the runtime swappable, but Claude Code is the only implementation.
 2. **Customer Memory** — `MemoryStore` interface, SQLite-backed in production. Four conceptual layers (profile, state, history, instinct) but profile/state are mostly delegated to CSP now; SQLite keeps agent-private observations.

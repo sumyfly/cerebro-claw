@@ -23,6 +23,8 @@ export class InMemoryActionLedger implements ActionLedger {
 			executedAt: input.executedAt,
 			payload: input.payload,
 			note: input.note,
+			situationId: input.situationId,
+			renewalId: input.renewalId,
 		};
 		this.entries.set(entry.id, entry);
 		return entry;

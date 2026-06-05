@@ -12,6 +12,41 @@
 /** Which of the four action-policy bands an entry belongs to. */
 export type ActionBand = "act" | "notify-then-act" | "escalate" | "prep";
 
+/**
+ * A registered action band. The policy is an enumerable SET, not hardcoded
+ * prose — so a new band can be added via the extension seam (ExtensionAPI.
+ * registerBand) without editing the core. The default set is the four bands,
+ * with identical behavior.
+ */
+export interface ActionBandDef {
+	/** Band id (e.g. "act"). */
+	id: string;
+	/** One-line description of when to use it. */
+	description: string;
+	/** The tool the agent calls to use this band. */
+	toolName: string;
+}
+
+/** The default policy set — the canonical four bands. */
+export const DEFAULT_BANDS: ActionBandDef[] = [
+	{
+		id: "act",
+		description: "Reversible, low-stakes, fact-based work — just do it and log it.",
+		toolName: "act",
+	},
+	{
+		id: "notify-then-act",
+		description: "Routine customer touch — heads-up to the CSM, send after a pause window.",
+		toolName: "notify_then_send_to_customer",
+	},
+	{
+		id: "escalate",
+		description: "Irreversible / high-stakes / ambiguous — brief the CSM, they decide.",
+		toolName: "escalate",
+	},
+	{ id: "prep", description: "Ship a finished v1 for a CSM-owned conversation.", toolName: "prep" },
+];
+
 /** Lifecycle of an action. */
 export type ActionStatus =
 	/** Act / prep — finished immediately, nothing to wait on. */
@@ -49,6 +84,10 @@ export interface ActionLedgerEntry {
 	payload?: Record<string, unknown>;
 	/** If failed/cancelled, what happened. */
 	note?: string;
+	/** Links this action into a Situation storyline (when worked as part of one). */
+	situationId?: string;
+	/** Renewal this action concerns (UUID), when renewal-scoped — the CTA join. */
+	renewalId?: string;
 }
 
 /**

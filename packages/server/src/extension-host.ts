@@ -1,11 +1,13 @@
-import type {
-	ChannelAdapter,
-	EventHandler,
-	Extension,
-	ExtensionAPI,
-	ExtensionEvent,
-	MemoryStore,
-	ToolDefinition,
+import {
+	type ActionBandDef,
+	type ChannelAdapter,
+	DEFAULT_BANDS,
+	type EventHandler,
+	type Extension,
+	type ExtensionAPI,
+	type ExtensionEvent,
+	type MemoryStore,
+	type ToolDefinition,
 } from "@cerebro-claw/shared";
 
 export interface ExtensionHostContext {
@@ -24,6 +26,8 @@ export class ExtensionHost {
 	private handlers = new Map<ExtensionEvent, EventHandler[]>();
 	private ctx: ExtensionHostContext;
 	private loaded: string[] = [];
+	/** The action policy as a registered set — seeded with the default four bands. */
+	private bands: ActionBandDef[] = [...DEFAULT_BANDS];
 
 	constructor(ctx: ExtensionHostContext) {
 		this.ctx = ctx;
@@ -35,6 +39,9 @@ export class ExtensionHost {
 				extensionId: ext.id,
 				registerTool: (tool) => this.tools.push(tool),
 				registerChannel: (channel) => this.channels.push(channel),
+				registerBand: (band) => {
+					if (!this.bands.some((b) => b.id === band.id)) this.bands.push(band);
+				},
 				on: (event, handler) => {
 					const arr = this.handlers.get(event) ?? [];
 					arr.push(handler);
@@ -56,6 +63,11 @@ export class ExtensionHost {
 
 	getTools(): ToolDefinition[] {
 		return this.tools;
+	}
+
+	/** The action policy as an enumerable set — default four bands plus any registered. */
+	getBands(): ActionBandDef[] {
+		return [...this.bands];
 	}
 
 	getChannels(): ChannelAdapter[] {

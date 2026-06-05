@@ -3,7 +3,30 @@ import type {
 	ActionLedgerEntry,
 	CustomerChannel,
 	ToolDefinition,
+	ToolParameterProperty,
 } from "@cerebro-claw/shared";
+
+/** Optional link fields shared by every action tool so ledger entries join a Situation storyline. */
+const SITUATION_LINK_PROPS: Record<string, ToolParameterProperty> = {
+	situation_id: {
+		type: "string",
+		description: "Link this action to an open Situation (its id) so it joins that storyline.",
+	},
+	renewal_id: {
+		type: "string",
+		description: "Renewal UUID this action concerns, when renewal-scoped (the CTA join).",
+	},
+};
+
+function situationLink(params: Record<string, unknown>): {
+	situationId?: string;
+	renewalId?: string;
+} {
+	return {
+		situationId: (params.situation_id as string) ?? undefined,
+		renewalId: (params.renewal_id as string) ?? undefined,
+	};
+}
 
 /**
  * Context the action-policy tools need.
@@ -97,6 +120,7 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 					type: "string",
 					description: "Why this action was warranted (signal + judgment)",
 				},
+				...SITUATION_LINK_PROPS,
 			},
 			required: ["customer_id", "summary", "reason"],
 		},
@@ -113,6 +137,7 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 				status: "done",
 				createdAt: ts,
 				executedAt: ts,
+				...situationLink(params),
 			});
 			return {
 				content: `Act logged (#${entry.id.slice(0, 8)}): ${entry.summary}`,
@@ -154,6 +179,7 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 					type: "string",
 					description: "Override the CSM channel recipient (defaults to DEFAULT_CSM_LARK_USER_ID)",
 				},
+				...SITUATION_LINK_PROPS,
 			},
 			required: ["customer_id", "recipient", "text", "reason"],
 		},
@@ -188,6 +214,7 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 					text: params.text,
 					channel: (params.channel as string) === "call" ? "call" : "message",
 				},
+				...situationLink(params),
 			});
 
 			// Heads-up to the CSM — they have `pauseMin` minutes to cancel.
@@ -245,6 +272,7 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 					type: "string",
 					description: "Override the CSM channel recipient",
 				},
+				...SITUATION_LINK_PROPS,
 			},
 			required: ["customer_id", "situation", "options", "recommendation"],
 		},
@@ -277,6 +305,7 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 					recommendation: params.recommendation,
 					urgency: params.urgency,
 				},
+				...situationLink(params),
 			});
 
 			try {
@@ -319,6 +348,7 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 					type: "string",
 					description: "Override the CSM channel recipient",
 				},
+				...SITUATION_LINK_PROPS,
 			},
 			required: ["customer_id", "artifact_type", "body"],
 		},
@@ -342,6 +372,7 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 					artifactType: params.artifact_type,
 					body: params.body,
 				},
+				...situationLink(params),
 			});
 
 			try {

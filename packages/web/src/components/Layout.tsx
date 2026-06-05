@@ -22,7 +22,7 @@ interface NavItem {
 }
 
 const NAV: NavItem[] = [
-	{ path: "/", label: "Pipeline", icon: <NodeIndexOutlined /> },
+	{ path: "/", label: "Activity", icon: <NodeIndexOutlined /> },
 	{ path: "/tasks", label: "Tasks", icon: <CheckSquareOutlined /> },
 	{ path: "/blocked", label: "Blocked", icon: <StopOutlined /> },
 	{ path: "/skills", label: "Intel", icon: <ApiOutlined /> },

@@ -5,50 +5,50 @@
 
 ## 1. Situations (Thread 1 — the load-bearing change)
 
-- [ ] 1.1 Add `Situation` and `SituationStatus` types to `@cerebro-claw/shared` (id, businessId, kind, title, status, openedAt, nextCheckpoint?, waitingFor?, needsAttention). Timeline is derived from ledger rows linked by `situationId` — not a stored field.
-- [ ] 1.2 Add optional `situationId` to the action/ledger types.
-- [ ] 1.3 Define a `SituationStore` interface (open, get, listOpen(businessId), update, resolve) in shared.
-- [ ] 1.4 Implement an in-memory `SituationStore` for tests/dev.
-- [ ] 1.5 Implement the SQLite `SituationStore` + `situations` table in `@cerebro-claw/memory`.
-- [ ] 1.6 Perceive: extend `engine/decision-context` and `task-context` to load open situations for the subject.
-- [ ] 1.7 Remember: after each action, open/advance/resolve the relevant situation; link the ledger entry via `situationId`.
-- [ ] 1.8 Dedup-by-situation: skip re-flagging a subject with a `watching` situation whose `nextCheckpoint` is in the future.
-- [ ] 1.9 Situation tools for the agent (open/advance/resolve) registered as a built-in extension (ledger + situation access).
-- [ ] 1.10 System prompt: teach the agent to consult and maintain situations; "watching" opens a Situation, not an `act`.
-- [ ] 1.11 Tests: persistence across cycles, no-re-discovery, checkpoint revisit, escalation→situation resolution, storyline reconstruction.
+- [x] 1.1 Add `Situation` and `SituationStatus` types to `@cerebro-claw/shared` (id, businessId, kind, title, status, openedAt, nextCheckpoint?, waitingFor?, needsAttention). Timeline is derived from ledger rows linked by `situationId` — not a stored field. **Also added `resolveNextCheckpoint`/`situationNeedsCsm` helpers.**
+- [x] 1.2 Add optional `situationId` (and `renewalId`) to the action/ledger types; persisted in both ledger impls (SQLite via additive `ALTER TABLE`).
+- [x] 1.3 Define a `SituationStore` interface (open, get, findOpen, listOpen, listNeedingCsm, listWatching, update, resolve) in shared.
+- [x] 1.4 Implement an in-memory `SituationStore` for tests/dev.
+- [x] 1.5 Implement the SQLite `SituationStore` + `situations` table in `@cerebro-claw/memory` (partial-unique index enforces the identity invariant).
+- [x] 1.6 Perceive: account sweep loads open situations via `renderSituations` and injects them into the agent's context. (task-context wiring pending in group 1b.)
+- [x] 1.7 Remember: situation lifecycle agent-driven via `situation_open/advance/resolve`; the four action-policy tools now accept optional `situation_id`/`renewal_id` and stamp the ledger link.
+- [x] 1.8 Dedup-by-situation: a `watching` situation whose checkpoint hasn't passed is surfaced as an explicit "leave it" signal in context; the agent advances rather than re-flags (no `act` duplicate).
+- [x] 1.9 Situation tools (open/advance/resolve/list) created in `@cerebro-claw/tools` and registered via the built-in `situation-tools` extension wired in `app.ts`.
+- [x] 1.10 System prompt: added the "Situations — your memory across cycles" section ("watching" opens a Situation, not an `act`).
+- [x] 1.11 Tests: store-level (idempotent open, two-renewals-two-situations, checkpoint default/clamp, needs-CSM, resolve) + brain-loop renewal-sweep convergence test (no duplicate situation across cycles).
 
 ## 1b. Renewals as a first-class input (renewal-source)
 
-- [ ] 1b.1 Add a `RenewalSource` interface to `@cerebro-claw/shared` (`label`, `listOpen()`, `getContext(id)`, `writeBack(id, outcome)`) — parallel to `TaskSource`.
-- [ ] 1b.2 Implement `StubRenewalSource` (in-memory) for tests/dev.
-- [ ] 1b.3 Implement `CspRenewalSource`: derive the open-renewal queue per **D6** — iterate accounts + per-account `csp_get_renewals`, filter to `RENEWAL_WINDOW_DAYS` (default 90) or at-risk; reuse `CSP_*`.
-- [ ] 1b.4 `RENEWAL_SOURCE=csp|stub|unset` selection mirroring `TASK_SOURCE`; unset → renewal sweep skipped (logged).
-- [ ] 1b.5 Work loop: add the renewal sweep (independent of account/task sweeps); render renewal-context in the engine.
-- [ ] 1b.6 Converge on the shared `renewal-risk` Situation (D2); dedup against open task/ledger linkage so renewal+task don't double-work.
-- [ ] 1b.7 Drive each renewal through the four bands; write back via existing `renewal-writeback` tools; ledger entries link `renewalId` + `situationId`.
-- [ ] 1b.8 Tests: renewal evaluated each cycle; empty source doesn't block others; renewal+account+task converge on one Situation; renewal-with-open-task not worked twice.
+- [x] 1b.1 Added a `RenewalSource` interface to `@cerebro-claw/shared` (`label`, `listOpen()`, `getContext(id)`); write-back reuses `csp_update_renewal`, so the source is read-only.
+- [x] 1b.2 Implemented `StubRenewalSource` (in-memory) in `@cerebro-claw/tools`.
+- [x] 1b.3 Implemented `createCspRenewalSource` (D6): iterate accounts + per-account renewals, filter to `RENEWAL_WINDOW_DAYS` (default 90) or at-risk.
+- [x] 1b.4 `RENEWAL_SOURCE=csp|stub|unset` selection in `config.ts` + `app.ts` (unset → renewal sweep skipped, logged). `.env.example` documented.
+- [x] 1b.5 Work loop: `cycleRenewals()` + `evaluateRenewal()` (independent sweep); `renderRenewalContext` in the engine.
+- [x] 1b.6 Converge on the shared per-`renewalId` `renewal-risk` Situation; situations injected into the renewal context; `RENEWAL_GUIDANCE` instructs task-first / don't-double-work.
+- [x] 1b.7 Drive each renewal through the four bands; ledger entries link `renewalId` + `situationId` via the action tools.
+- [x] 1b.8 Tests: `StubRenewalSource` list/fetch; renewal sweep opens a renewal-scoped situation + links the ledger; converges (no duplicate) across cycles.
 
 ## 2. Vocabulary (Thread 3)
 
-- [ ] 2.1 Write the canonical glossary into `CLAUDE.md` and a `docs/glossary.md`.
-- [ ] 2.2 Rename the web "Pipeline" page to "Activity"; remove "Agent Task Stream" wording.
-- [ ] 2.3 Audit UI labels, API field names, and docs for forbidden synonyms (Pipeline / Task-as-activity); align to glossary.
-- [ ] 2.4 Confirm the Tasks page renders only CSP work-items with a clear "no task source configured" empty state.
-- [ ] 2.5 Rename "Brain Loop" → "Work Loop" in code comments, logs, and docs; name the account/task sweeps.
+- [x] 2.1 Canonical glossary written to `docs/glossary.md`; `CLAUDE.md` Source-docs section points to it.
+- [x] 2.2 Web "Pipeline" page → "Activity" (nav label + page title "ACTIVITY — AGENT ACTION STREAM"); "Agent Task Stream" wording removed.
+- [x] 2.3 Audited web — no user-facing "Pipeline"/"Task Stream" remains (only the internal component symbol).
+- [x] 2.4 Confirmed: Tasks page renders only CSP work-items, with a "NO TASK SOURCE BOUND — SET TASK_SOURCE=CSP" empty state.
+- [x] 2.5 `[brain-loop]` logs → `[work-loop]`; sweeps named (account/task/renewal) in code + docs. (Class symbol `BrainLoop` kept internally.)
 
 ## 3. Loop framing (Thread 2)
 
-- [ ] 3.1 Re-tell `CLAUDE.md` architecture section as Perceive → Decide → Act → Remember.
-- [ ] 3.2 Add `docs/architecture.md` with the loop diagram and the module-to-phase mapping table.
-- [ ] 3.3 (Optional) Reorganize `server/src` so Perceive (`engine/`), Decide, Act, Remember are visibly grouped.
+- [x] 3.1 `CLAUDE.md` architecture section re-told as Perceive → Decide → Act → Remember (Work Loop + three sweeps).
+- [x] 3.2 Added `docs/architecture.md` with the loop diagram + phase→code mapping + the three-sweep inputs table.
+- [~] 3.3 (Optional) Physical `server/src` reorg deferred — `engine/` already groups Perceive; the phase mapping is documented rather than enforced by folders.
 
 ## 4. Extension surface (Thread 4)
 
-- [ ] 4.1 Write `docs/extending.md` — the seven-seam map with interface + registration + minimal example each.
-- [ ] 4.2 Refactor the four-band policy into a registered set (enumerable at runtime), default = the existing four, behavior identical.
-- [ ] 4.3 Add the band-registration seam to `ExtensionAPI` (register a band: id, tool, guidance) — no built-in behavior change.
-- [ ] 4.4 Add `SituationStore` to the extension-surface map as a swappable persistence seam.
-- [ ] 4.5 Tests: bands enumerable and default-identical; a registered extra band becomes available without core edits.
+- [x] 4.1 Wrote `docs/extending.md` — the seam map with interface + registration + a minimal extension example.
+- [x] 4.2 Action policy is a registered set: `ExtensionHost.getBands()` seeded with `DEFAULT_BANDS` (the four), behavior identical.
+- [x] 4.3 Added `registerBand(ActionBandDef)` to `ExtensionAPI` + `ExtensionHost` (dedupes by id) — no built-in behavior change.
+- [x] 4.4 `SituationStore` listed in the `docs/extending.md` persistence seam alongside `MemoryStore`/`ActionLedger`.
+- [x] 4.5 Tests: `extension-host-bands` — enumerates default four, an extension adds a band, duplicate id ignored.
 
 ## 5. Resolved decisions (see design.md §Decisions — now reflected in specs)
 
