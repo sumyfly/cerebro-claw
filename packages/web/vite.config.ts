@@ -5,8 +5,10 @@ export default defineConfig({
 	plugins: [react()],
 	server: {
 		port: 5173,
+		host: "0.0.0.0", // listen on all interfaces so the dev server is reachable over the LAN / frp tunnel
+		allowedHosts: true, // accept any Host header (LAN IP, frp domain, etc.)
 		proxy: {
-			"/api": "http://localhost:3000",
+			"/api": "http://localhost:5100",
 		},
 	},
 	build: {

@@ -37,7 +37,7 @@ pnpm turbo build
 pnpm turbo dev
 ```
 
-- Server: <http://localhost:3000>
+- Server: <http://localhost:5100>
 - Web UI: <http://localhost:5173>
 
 The Customers tab reads live from CSP when `CSP_TOKEN` + `CSP_CSM_EMAIL` are set (see [`docs/setup.md`](docs/setup.md)).

@@ -8,7 +8,7 @@ From clean checkout to working agent in Lark in ~30 minutes.
 pnpm install
 pnpm turbo build
 
-# Start everything (server :3000, web :5173)
+# Start everything (server :5100, web :5173)
 pnpm turbo dev
 ```
 
@@ -43,7 +43,7 @@ Characteristics:
 Check it's wired up:
 
 ```bash
-curl http://localhost:3000/api/diagnostics
+curl http://localhost:5100/api/diagnostics
 ```
 
 Should show `"runtime": { "ok": true, "detail": "claude-code: CLI ready" }`. Now chat with the agent in the web UI — pick a customer, ask "what's going on with Globex?" — it'll use the memory tools to look up the customer and respond with real context.
@@ -59,7 +59,7 @@ Should show `"runtime": { "ok": true, "detail": "claude-code: CLI ready" }`. Now
    - `im.message.receive_v1` (receive messages)
    - `card.action.trigger` (button clicks on cards)
 5. Set the Request URL to `https://your-server/webhook/lark`
-   (use ngrok for local: `ngrok http 3000`)
+   (use ngrok for local: `ngrok http 5100`)
 
 ### Configure permissions
 
@@ -83,7 +83,7 @@ The agent should reply with real customer context. Approve drafts from the admin
 ## 4. Verify everything
 
 ```bash
-curl http://localhost:3000/api/diagnostics
+curl http://localhost:5100/api/diagnostics
 ```
 
 You should see:

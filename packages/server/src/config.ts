@@ -38,7 +38,7 @@ export function loadConfig(): ServerConfig {
 		: DEFAULT_ALLOWLIST;
 
 	return {
-		port: Number(process.env.PORT ?? 3000),
+		port: Number(process.env.PORT ?? 5100),
 		larkAppId: process.env.LARK_APP_ID ?? "",
 		larkAppSecret: process.env.LARK_APP_SECRET ?? "",
 		brainLoopIntervalMs: Number(process.env.BRAIN_LOOP_INTERVAL_MS ?? 300_000),
