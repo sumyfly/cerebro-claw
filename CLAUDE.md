@@ -81,7 +81,7 @@ The system is one crank turned each cycle: **Perceive → Decide → Act → Rem
 1. **Agent Runtime** — `AgentBackend` interface implemented by `ClaudeCodeRuntime` (spawns `claude` with `--mcp-config` so the subprocess calls our tools over MCP — no Anthropic key needed). The interface keeps the runtime swappable, but Claude Code is the only implementation.
 2. **Customer Memory** — `MemoryStore` interface, SQLite-backed in production. Four conceptual layers (profile, state, history, instinct) but profile/state are mostly delegated to CSP now; SQLite keeps agent-private observations.
 3. **Action Ledger** — `ActionLedger` interface, SQLite-backed. Every act/notify/escalate/prep lands here. The digest reads from it; the dispatcher reads from it; the dashboard counters read from it.
-4. **Brain Loop** — runs `agent.prompt()` per account each cycle. Pluggable `AccountSource`: `createLocalAccountSource(store)` for demo seed, `createCspAccountSource({…})` to iterate the CSM's real CSP portfolio.
+4. **Brain Loop** — runs `agent.prompt()` per account each cycle. Pluggable `AccountSource`: `createLocalAccountSource(store)` for demo seed, `createCspAccountSource({…})` to iterate the CSM's real CSP portfolio. A single cycle can also be run on demand via `POST /api/brain/cycle?limit=N` (`limit` caps per-sweep fan-out; omitted = 3, `0` = full) — used by the Settings page "RUN ONE CYCLE" button and for cheap testing while the interval loop is off.
 5. **Dispatcher** — polls the ledger every 60s for due notify-then-act entries and sends them through the registered `CustomerChannel`. Failures are recorded back to the ledger (status `failed`, surfaced in the digest).
 6. **Channel Layer** — `ChannelAdapter` for CSM-facing channels (Lark today). `CustomerChannel` for the agent's outbound path to customers (`StubCustomerChannel` today; email/SMS to drop in later).
 7. **Tool Layer** — every tool is a `ToolDefinition { name, description, parameters (JSON Schema), execute }`. Categories: memory tools, action-policy tools (act/notify/escalate/prep/cancel/resolve), task tools (list/get/complete/block), message tools (legacy draft → CSP card flow), bash tool. External extensions add more (csp-connector adds 10).
@@ -174,3 +174,4 @@ See `.env.example` for the full list. The important ones:
 | `EXTENSIONS_DIR` | Where filesystem extension loader scans (default `./extensions`) |
 | `DISPATCHER_INTERVAL_MS` | How often the notify-then-act dispatcher polls (default 60s) |
 | `DEFAULT_PAUSE_MINUTES` | Default pause window for `notify_then_send_to_customer` (default 240 = 4h) |
+| `BRAIN_LOOP_RUN_ON_START` | Run a cycle immediately on boot (default `false` — avoids a token tax on every dev restart) |
