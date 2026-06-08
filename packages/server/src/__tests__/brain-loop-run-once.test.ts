@@ -70,3 +70,41 @@ describe("BrainLoop.runOnce", () => {
 		expect(res).toEqual({ ran: false, reason: "cycle already running" });
 	});
 });
+
+describe("BrainLoop boot cycle gate", () => {
+	function loopWithRunOnStart(runOnStart: boolean) {
+		const prompt = vi.fn(async () => ({ text: "done", toolCalls: [] }));
+		const l = new BrainLoop(
+			new InMemoryStore(),
+			{ prompt } as never,
+			999_999,
+			true,
+			null,
+			undefined,
+			null,
+			null,
+			new StubRenewalSource({ renewals }),
+			null,
+			0,
+			0,
+			runOnStart,
+		);
+		return { l, prompt };
+	}
+
+	it("does NOT run a cycle on start when runOnStart is false", async () => {
+		const { l, prompt } = loopWithRunOnStart(false);
+		l.start();
+		await new Promise((r) => setTimeout(r, 10));
+		expect(prompt).not.toHaveBeenCalled();
+		l.stop();
+	});
+
+	it("runs a cycle on start when runOnStart is true", async () => {
+		const { l, prompt } = loopWithRunOnStart(true);
+		l.start();
+		await new Promise((r) => setTimeout(r, 10));
+		expect(prompt).toHaveBeenCalledTimes(3);
+		l.stop();
+	});
+});

@@ -312,6 +312,7 @@ export async function createApp(): Promise<AppHandles> {
 		situationStore,
 		config.triageMax,
 		config.triageMinScore,
+		config.brainLoopRunOnStart,
 	);
 
 	// Dispatcher — picks up due notify-then-act sends and pushes them through

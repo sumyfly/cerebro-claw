@@ -268,6 +268,7 @@ export class BrainLoop {
 	private situationStore: SituationStore | null;
 	private triageMax: number;
 	private triageMinScore: number;
+	private runOnStart: boolean;
 
 	constructor(
 		store: MemoryStore,
@@ -282,6 +283,7 @@ export class BrainLoop {
 		situationStore: SituationStore | null = null,
 		triageMax = 0,
 		triageMinScore = 0,
+		runOnStart = false,
 	) {
 		this.store = store;
 		this.agent = agent;
@@ -295,6 +297,7 @@ export class BrainLoop {
 		this.situationStore = situationStore;
 		this.triageMax = triageMax;
 		this.triageMinScore = triageMinScore;
+		this.runOnStart = runOnStart;
 	}
 
 	/**
@@ -344,7 +347,7 @@ export class BrainLoop {
 		if (this.timer) return;
 		console.log(`[work-loop] Starting — cycle every ${this.intervalMs / 1000}s`);
 		this.timer = setInterval(() => this.cycle(), this.intervalMs);
-		this.cycle();
+		if (this.runOnStart) this.cycle();
 	}
 
 	stop(): void {

@@ -7,6 +7,8 @@ export interface ServerConfig {
 	larkAppId: string;
 	larkAppSecret: string;
 	brainLoopIntervalMs: number;
+	/** Run a cycle immediately on boot. Default false — avoids a token tax on every dev restart. */
+	brainLoopRunOnStart: boolean;
 	model: string;
 	dbPath: string;
 	bashAllowlist: string[];
@@ -50,6 +52,7 @@ export function loadConfig(): ServerConfig {
 		larkAppId: process.env.LARK_APP_ID ?? "",
 		larkAppSecret: process.env.LARK_APP_SECRET ?? "",
 		brainLoopIntervalMs: Number(process.env.BRAIN_LOOP_INTERVAL_MS ?? 300_000),
+		brainLoopRunOnStart: /^(1|true|yes)$/i.test(process.env.BRAIN_LOOP_RUN_ON_START ?? ""),
 		model: process.env.MODEL ?? "claude-sonnet-4-20250514",
 		dbPath: process.env.DB_PATH ?? join(homedir(), ".cerebro-claw", "data.db"),
 		bashAllowlist,
