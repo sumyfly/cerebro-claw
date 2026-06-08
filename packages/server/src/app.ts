@@ -30,6 +30,7 @@ import { createCspTaskSource } from "./csp-task-source.js";
 import { computeDigestCounts, digestHeadline } from "./digest.js";
 import { NotifyThenActDispatcher } from "./dispatcher.js";
 import { resolveOverrideFromStore } from "./engine/overrides.js";
+import { computeTriageScore, selectByTriage } from "./engine/triage.js";
 import { ExtensionHost } from "./extension-host.js";
 import { loadExtensionsFromDir } from "./extension-loader.js";
 import { createMcpHandler } from "./mcp-server.js";
@@ -309,6 +310,8 @@ export async function createApp(): Promise<AppHandles> {
 		ledger,
 		renewalSource,
 		situationStore,
+		config.triageMax,
+		config.triageMinScore,
 	);
 
 	// Dispatcher — picks up due notify-then-act sends and pushes them through
@@ -434,6 +437,35 @@ export async function createApp(): Promise<AppHandles> {
 			})),
 		);
 		res.json({ needsCsm: items, watchingCount: watching.length });
+	});
+
+	// Triage queue — how the work loop would rank/spend this cycle. Recomputed on
+	// demand from the renewal + task sources (cheap, no model call). Shows the
+	// budget (TRIAGE_MAX/MIN) and which subjects would be deferred and why.
+	app.get("/api/triage", async (_req, res) => {
+		const max = config.triageMax > 0 ? config.triageMax : Number.POSITIVE_INFINITY;
+		const minScore = config.triageMinScore;
+		const renewals = renewalSource ? await renewalSource.listOpen() : [];
+		const tasks = taskSource ? await taskSource.listOpen() : [];
+		const renewalQ = selectByTriage(
+			renewals,
+			(r) =>
+				computeTriageScore({
+					atRisk: r.atRisk,
+					daysToRenewal: r.daysToRenewal,
+					contractValue: r.arr,
+				}),
+			{ max, minScore },
+		);
+		const taskQ = selectByTriage(tasks, (t) => computeTriageScore({ priority: t.priority }), {
+			max,
+			minScore,
+		});
+		res.json({
+			budget: { max: config.triageMax, minScore },
+			renewals: { selected: renewalQ.selected, deferred: renewalQ.deferred },
+			tasks: { selected: taskQ.selected, deferred: taskQ.deferred },
+		});
 	});
 
 	// Task queue for the ops console — open tasks joined with the agent's

@@ -13,6 +13,7 @@ import { parseOverrideBand } from "./engine/overrides.js";
 import { renderRenewalContext } from "./engine/renewal-context.js";
 import { type AccountSnapshot, computeSignals } from "./engine/signals.js";
 import { renderTaskContext } from "./engine/task-context.js";
+import { type TriageScore, computeTriageScore, selectByTriage } from "./engine/triage.js";
 import { BAND_GUIDANCE, RENEWAL_GUIDANCE, TASK_GUIDANCE, reviewPointer } from "./review-prompt.js";
 
 export interface EventEmitter {
@@ -246,6 +247,8 @@ export class BrainLoop {
 	private ledger: ActionLedger | null;
 	private renewalSource: RenewalSource | null;
 	private situationStore: SituationStore | null;
+	private triageMax: number;
+	private triageMinScore: number;
 
 	constructor(
 		store: MemoryStore,
@@ -258,6 +261,8 @@ export class BrainLoop {
 		ledger: ActionLedger | null = null,
 		renewalSource: RenewalSource | null = null,
 		situationStore: SituationStore | null = null,
+		triageMax = 0,
+		triageMinScore = 0,
 	) {
 		this.store = store;
 		this.agent = agent;
@@ -269,6 +274,29 @@ export class BrainLoop {
 		this.ledger = ledger;
 		this.renewalSource = renewalSource;
 		this.situationStore = situationStore;
+		this.triageMax = triageMax;
+		this.triageMinScore = triageMinScore;
+	}
+
+	/**
+	 * Triage gate: when enabled (triageMax > 0), rank candidates by score and
+	 * keep only the top-N above the floor, logging what was deferred. When
+	 * disabled (triageMax = 0) every candidate is worked — the prior behavior.
+	 */
+	private triageSelect<T>(items: T[], scoreOf: (t: T) => TriageScore, label: string): T[] {
+		if (this.triageMax <= 0 || items.length === 0) return items;
+		const { selected, deferred } = selectByTriage(items, scoreOf, {
+			max: this.triageMax,
+			minScore: this.triageMinScore,
+		});
+		if (deferred.length > 0) {
+			const below = deferred.filter((d) => d.reason === "below-floor").length;
+			const over = deferred.length - below;
+			console.log(
+				`[work-loop] ${label} triage: ${selected.length} worked, ${deferred.length} deferred (${below} below floor, ${over} over budget)`,
+			);
+		}
+		return selected.map((s) => s.item);
 	}
 
 	start(): void {
@@ -302,10 +330,14 @@ export class BrainLoop {
 
 		try {
 			// 1) Accounts — the change-detection sweep over the CSM's portfolio.
-			const accounts = await this.source.list();
-			if (accounts.length === 0) {
+			const allAccounts = await this.source.list();
+			if (allAccounts.length === 0) {
 				console.log("[work-loop] No customers from source");
 			}
+			// Triage caps how many accounts get an agent turn per cycle. Account list
+			// records carry no signals, so they score neutral — this is a budget cap;
+			// ranking sharpens once the source supplies triage fields.
+			const accounts = this.triageSelect(allAccounts, () => computeTriageScore({}), "Accounts");
 			for (const a of accounts) {
 				await this.evaluateCustomer(a.id, a.companyName);
 			}
@@ -351,17 +383,18 @@ export class BrainLoop {
 		}
 
 		const inFlight = await this.tasksWithOpenActions();
-		let skipped = 0;
-		for (const task of tasks) {
-			if (inFlight.has(task.id)) {
-				skipped += 1;
-				continue;
-			}
+		const open = tasks.filter((t) => !inFlight.has(t.id));
+		const skipped = tasks.length - open.length;
+		// Triage: work the highest-priority tasks first, under budget.
+		const worked = this.triageSelect(
+			open,
+			(t) => computeTriageScore({ priority: t.priority }),
+			"Tasks",
+		);
+		for (const task of worked) {
 			await this.evaluateTask(task);
 		}
-		console.log(
-			`[work-loop] Tasks: ${tasks.length - skipped} evaluated, ${skipped} skipped (mid-flight)`,
-		);
+		console.log(`[work-loop] Tasks: ${worked.length} evaluated, ${skipped} skipped (mid-flight)`);
 	}
 
 	/** Task ids that already have an open (in-flight / needs-csm) ledger action. */
@@ -420,10 +453,21 @@ ${TASK_GUIDANCE}`;
 			console.log("[work-loop] No open renewals");
 			return;
 		}
-		for (const renewal of renewals) {
+		// Triage: work the highest risk × value × urgency renewals first, under budget.
+		const worked = this.triageSelect(
+			renewals,
+			(r) =>
+				computeTriageScore({
+					atRisk: r.atRisk,
+					daysToRenewal: r.daysToRenewal,
+					contractValue: r.arr,
+				}),
+			"Renewals",
+		);
+		for (const renewal of worked) {
 			await this.evaluateRenewal(renewal.id);
 		}
-		console.log(`[work-loop] Renewals: ${renewals.length} evaluated`);
+		console.log(`[work-loop] Renewals: ${worked.length} evaluated`);
 	}
 
 	private async evaluateRenewal(id: string): Promise<void> {

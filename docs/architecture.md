@@ -34,6 +34,7 @@ Domain hierarchy: **Renewal → CTA → Task**. All three sweeps converge on one
 
 | Phase | What it does | Code |
 |---|---|---|
+| **Triage** (front of Perceive) | Score each subject **risk × value × urgency** (no model call) and keep only the top-N above a floor per cycle — spend agent turns on what matters | `engine/triage` (`computeTriageScore`, `selectByTriage`); `TRIAGE_MAX`/`TRIAGE_MIN_SCORE` |
 | **Perceive** | Build side-effect-free context: CSP signals, snapshot, and the subject's **open Situations** | `engine/signals`, `engine/csp-snapshot`, `engine/decision-context` (`renderSituations`), `engine/task-context`, `engine/renewal-context` |
 | **Decide** | The agent (`claude` over MCP) picks a band; the policy is a registered set | `claude-code-runtime`, `review-prompt`, `ExtensionHost.getBands()` |
 | **Decide → Act gate** | A **critic** (`Verifier`) checks a high-stakes action follows from the signals before it commits — the third gate after the override floor and before the pause window | `verifier.ts`, action-policy tools |
