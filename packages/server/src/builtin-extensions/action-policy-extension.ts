@@ -1,4 +1,10 @@
-import type { ActionLedger, CustomerChannel, Extension } from "@cerebro-claw/shared";
+import type {
+	ActionLedger,
+	CustomerChannel,
+	Extension,
+	VerificationInput,
+	VerificationResult,
+} from "@cerebro-claw/shared";
 import { createActionPolicyTools } from "@cerebro-claw/tools";
 import type { ExtensionHost } from "../extension-host.js";
 
@@ -12,6 +18,10 @@ export interface ActionPolicyExtensionOptions {
 	resolveOverride?: (
 		customerId: string,
 	) => Promise<{ forcesBand?: string } | null> | { forcesBand?: string } | null;
+	/** Critic that gates high-stakes bands before they commit. Absent = disabled. */
+	verify?: (input: VerificationInput) => Promise<VerificationResult>;
+	/** Bands gated by `verify`. */
+	verifyBands?: string[];
 }
 
 /**
@@ -32,6 +42,8 @@ export function createActionPolicyExtension(opts: ActionPolicyExtensionOptions):
 				defaultCsmRecipientId: opts.defaultCsmRecipientId,
 				defaultPauseMinutes: opts.defaultPauseMinutes,
 				resolveOverride: opts.resolveOverride,
+				verify: opts.verify,
+				verifyBands: opts.verifyBands,
 				async sendToCsm(recipientId, text) {
 					const sender = opts.host.getChannelSender();
 					if (sender && recipientId !== "stub-csm") {

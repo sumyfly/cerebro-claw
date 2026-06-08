@@ -68,3 +68,5 @@ export {
 } from "./situation.js";
 
 export type { RenewalRecord, RenewalSource } from "./renewal.js";
+
+export type { VerificationInput, VerificationResult, Verifier } from "./verifier.js";

@@ -36,6 +36,7 @@ Domain hierarchy: **Renewal → CTA → Task**. All three sweeps converge on one
 |---|---|---|
 | **Perceive** | Build side-effect-free context: CSP signals, snapshot, and the subject's **open Situations** | `engine/signals`, `engine/csp-snapshot`, `engine/decision-context` (`renderSituations`), `engine/task-context`, `engine/renewal-context` |
 | **Decide** | The agent (`claude` over MCP) picks a band; the policy is a registered set | `claude-code-runtime`, `review-prompt`, `ExtensionHost.getBands()` |
+| **Decide → Act gate** | A **critic** (`Verifier`) checks a high-stakes action follows from the signals before it commits — the third gate after the override floor and before the pause window | `verifier.ts`, action-policy tools |
 | **Act** | The band's tool does the work; the dispatcher sends due notify-then-act | `tools/` (act/notify/escalate/prep), `dispatcher` |
 | **Remember** | Append to the **ledger** (Activity), keep agent-private **instincts**, and maintain **Situations** (the storyline across cycles) | `memory/` (`ActionLedger`, `MemoryStore`, `SituationStore`) |
 

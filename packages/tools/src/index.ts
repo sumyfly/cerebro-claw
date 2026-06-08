@@ -19,3 +19,4 @@ export { createSituationTools } from "./situation-tools.js";
 export type { SituationToolsContext } from "./situation-tools.js";
 export { StubRenewalSource } from "./stub-renewal-source.js";
 export type { StubRenewalSourceOptions } from "./stub-renewal-source.js";
+export { createNoopVerifier } from "./noop-verifier.js";

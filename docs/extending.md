@@ -15,6 +15,7 @@ The agent is built from swappable seams. To add a capability, implement the inte
 | **Reach customers** | `CustomerChannel` | constructed in `app.ts` | `StubCustomerChannel` |
 | **Change persistence** | `MemoryStore` / `ActionLedger` / `SituationStore` | constructed in `app.ts` | `Sqlite*` / `InMemory*` |
 | **Add an action band** | `api.registerBand(ActionBandDef)` + its tool | extension factory | (default set = the four bands) |
+| **Verify high-stakes actions** | `Verifier` | passed to the action-policy tools in `app.ts` | `createLlmCriticVerifier` (default); `createNoopVerifier` (disabled) |
 | **Plug in anything** (lifecycle hooks) | `ExtensionFactory` + `api.on(event, …)` | `extensions/<name>/index.ts` or built-in | `sample-greeting`, built-ins |
 
 ## How to add an extension

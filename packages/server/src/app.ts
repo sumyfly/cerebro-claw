@@ -9,6 +9,7 @@ import type {
 	RenewalSource,
 	SituationStore,
 	TaskSource,
+	Verifier,
 } from "@cerebro-claw/shared";
 import { StubCustomerChannel, StubRenewalSource, StubTaskSource } from "@cerebro-claw/tools";
 import express, { type Express } from "express";
@@ -35,6 +36,7 @@ import { createMcpHandler } from "./mcp-server.js";
 import { errorHandler, notFoundHandler, requestLogger } from "./middleware.js";
 import { type RecentToolCall, createRecentToolCalls } from "./recent-tools.js";
 import { Router } from "./router.js";
+import { createLlmCriticVerifier } from "./verifier.js";
 
 export interface AppHandles {
 	app: Express;
@@ -181,6 +183,17 @@ export async function createApp(): Promise<AppHandles> {
 		console.log("[renewals] No renewal source configured — renewal sweep skipped.");
 	}
 
+	// Verifier (critic) — gates notify-then-act / escalate before they commit.
+	// The default critic needs the agent, which is created AFTER extensions load,
+	// so we pass a deferred closure: verify is only ever CALLED at action time,
+	// long after `verifier` is assigned below.
+	const verifyEnabled = !/^(0|false|no)$/i.test(process.env.VERIFY_ENABLED ?? "");
+	const verifyBands = (process.env.VERIFY_BANDS ?? "notify-then-act,escalate")
+		.split(",")
+		.map((s) => s.trim())
+		.filter(Boolean);
+	let verifier: Verifier | null = null;
+
 	// Load extensions: built-in first, then any from the extensions/ directory
 	const userExtensions = await loadExtensionsFromDir(config.extensionsDir);
 	await host.load([
@@ -194,6 +207,13 @@ export async function createApp(): Promise<AppHandles> {
 			// Enforce stored overrides as a hard gate (overrides are taught by the
 			// CSM as instinct notes; resolveOverrideFromStore parses them).
 			resolveOverride: (customerId) => resolveOverrideFromStore(store, customerId),
+			verify: verifyEnabled
+				? (input) =>
+						verifier
+							? verifier.verify(input)
+							: Promise.resolve({ pass: true, reason: "verifier not ready" })
+				: undefined,
+			verifyBands,
 		}),
 		createBashToolExtension({
 			allowlist: config.bashAllowlist,
@@ -247,6 +267,14 @@ export async function createApp(): Promise<AppHandles> {
 		mcpUrl,
 	);
 	console.log("[runtime] Using claude-code");
+
+	// Now the agent exists — bind the default LLM critic (deferred closure above).
+	if (verifyEnabled) {
+		verifier = createLlmCriticVerifier(agent);
+		console.log(`[verify] Critic enabled for bands: ${verifyBands.join(", ")}`);
+	} else {
+		console.log("[verify] Verification disabled (VERIFY_ENABLED=false).");
+	}
 
 	// Router and brain loop (brain loop emits lifecycle events through the host).
 	// BRAIN_LOOP_ENABLED=false keeps the API/UI up without spawning agent cycles
