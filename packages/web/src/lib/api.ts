@@ -94,6 +94,23 @@ export interface TaskQueue {
 
 export type Diagnostics = Record<string, { ok: boolean; detail?: string }>;
 
+/** One sweep's tally in a manual cycle summary. */
+export interface CycleSweep {
+	evaluated: number;
+	available: number;
+}
+
+/** Response of POST /api/brain/cycle. */
+export interface CycleSummary {
+	ran: true;
+	limit: number;
+	accounts: CycleSweep;
+	tasks: CycleSweep;
+	renewals: CycleSweep;
+	actionsTaken: number;
+	durationMs: number;
+}
+
 /** Error carrying the HTTP status so callers can branch on it (e.g. 404). */
 export class HttpError extends Error {
 	readonly status: number;
