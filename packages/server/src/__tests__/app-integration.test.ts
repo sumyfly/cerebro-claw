@@ -89,7 +89,7 @@ describe("App integration", () => {
 		const res = await request(app).get("/api/digest/counters");
 		expect(res.status).toBe(200);
 		expect(res.body.headline).toMatch(
-			/Yesterday: \d+ acts, \d+ notifies in-flight, \d+ escalations need you\./,
+			/Yesterday: \d+ acts, \d+ notifies in-flight, \d+ situations need you\./,
 		);
 		expect(res.body.counts.acts).toBeGreaterThanOrEqual(0);
 		expect(res.body.counts.notifies).toBeDefined();

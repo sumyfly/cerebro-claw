@@ -27,8 +27,35 @@ export interface DigestCounters {
 		acts: number;
 		notifies: { inFlight: number; executed: number; cancelled: number; failed: number };
 		escalations: { needsCsm: number; resolved: number };
+		situations: { needsCsm: number; watching: number };
 		preps: number;
 	};
+}
+
+/** A persistent storyline the agent works across cycles. */
+export interface Situation {
+	id: string;
+	businessId: string;
+	customerName?: string;
+	kind: string;
+	renewalId?: string;
+	title: string;
+	status: "open" | "watching" | "escalated" | "resolved";
+	openedAt: string;
+	updatedAt: string;
+	nextCheckpoint?: string;
+	waitingFor?: string;
+	needsAttention: boolean;
+	note?: string;
+}
+
+export interface SituationWithStoryline extends Situation {
+	storyline: LedgerEntry[];
+}
+
+export interface SituationQueue {
+	needsCsm: SituationWithStoryline[];
+	watchingCount: number;
 }
 
 export interface ExtensionInfo {

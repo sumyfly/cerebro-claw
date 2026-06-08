@@ -179,6 +179,13 @@ export class SqliteActionLedger implements ActionLedger {
 		return rows.map((r) => this.toEntry(r));
 	}
 
+	async listBySituation(situationId: string): Promise<ActionLedgerEntry[]> {
+		const rows = this.db
+			.prepare("SELECT * FROM action_ledger WHERE situation_id = ? ORDER BY created_at")
+			.all(situationId) as Row[];
+		return rows.map((r) => this.toEntry(r));
+	}
+
 	close(): void {
 		if (this.ownsConnection) this.db.close();
 	}

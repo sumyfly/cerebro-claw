@@ -387,11 +387,25 @@ export async function createApp(): Promise<AppHandles> {
 		res.json(updated);
 	});
 
-	// "Yesterday: 47 acts, 12 notifies in-flight, 2 escalations need you."
+	// "Yesterday: 47 acts, 12 notifies in-flight, 3 situations need you."
 	app.get("/api/digest/counters", async (req, res) => {
 		const windowHours = Number(req.query.hours ?? 24);
-		const counts = await computeDigestCounts(ledger, new Date(), windowHours);
+		const counts = await computeDigestCounts(ledger, new Date(), windowHours, situationStore);
 		res.json({ headline: digestHeadline(counts), counts });
+	});
+
+	// Situations needing the CSM — open storylines (escalated OR needsAttention),
+	// each joined with its ledger storyline, plus a watching count.
+	app.get("/api/situations", async (_req, res) => {
+		const needing = await situationStore.listNeedingCsm();
+		const watching = await situationStore.listWatching();
+		const items = await Promise.all(
+			needing.map(async (s) => ({
+				...s,
+				storyline: await ledger.listBySituation(s.id),
+			})),
+		);
+		res.json({ needsCsm: items, watchingCount: watching.length });
 	});
 
 	// Task queue for the ops console — open tasks joined with the agent's

@@ -120,4 +120,7 @@ export interface ActionLedger {
 
 	/** All in-flight or needs-csm entries (for the live counter on the dashboard). */
 	listOpen(): Promise<ActionLedgerEntry[]>;
+
+	/** All entries linked to a situation, chronological — the situation's storyline. */
+	listBySituation(situationId: string): Promise<ActionLedgerEntry[]>;
 }

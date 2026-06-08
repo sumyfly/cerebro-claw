@@ -66,4 +66,10 @@ export class InMemoryActionLedger implements ActionLedger {
 			(e) => e.status === "in-flight" || e.status === "needs-csm",
 		);
 	}
+
+	async listBySituation(situationId: string): Promise<ActionLedgerEntry[]> {
+		return Array.from(this.entries.values())
+			.filter((e) => e.situationId === situationId)
+			.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+	}
 }

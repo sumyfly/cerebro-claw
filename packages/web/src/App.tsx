@@ -4,6 +4,7 @@ import { AppLayout } from "./components/Layout.js";
 import { Blocked } from "./pages/Blocked.js";
 import { Pipeline } from "./pages/Pipeline.js";
 import { Settings } from "./pages/Settings.js";
+import { Situations } from "./pages/Situations.js";
 import { Skills } from "./pages/Skills.js";
 import { Tasks } from "./pages/Tasks.js";
 import "./theme.css";
@@ -30,6 +31,7 @@ export function App() {
 					<Route element={<AppLayout />}>
 						<Route path="/" element={<Pipeline />} />
 						<Route path="/tasks" element={<Tasks />} />
+						<Route path="/situations" element={<Situations />} />
 						<Route path="/blocked" element={<Blocked />} />
 						<Route path="/skills" element={<Skills />} />
 						<Route path="/settings" element={<Settings />} />

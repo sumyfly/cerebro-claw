@@ -50,6 +50,14 @@
 - [x] 4.4 `SituationStore` listed in the `docs/extending.md` persistence seam alongside `MemoryStore`/`ActionLedger`.
 - [x] 4.5 Tests: `extension-host-bands` — enumerates default four, an extension adds a band, duplicate id ignored.
 
+## 6. Situations UI + digest reframe (D5 — the user-facing surface)
+
+- [x] 6.1 Added `ActionLedger.listBySituation(situationId)` (+ both impls; SQLite uses the situation_id index) — reconstructs a situation's storyline.
+- [x] 6.2 `GET /api/situations` returns situations needing the CSM, each joined with its `storyline` (linked ledger entries), plus `watchingCount`.
+- [x] 6.3 Digest reframe (D5): added a `situations` block; headline third number → "N situations need you" (union of escalated/needsAttention situations + needs-csm escalations with no situation). `escalations` block kept for back-compat.
+- [x] 6.4 Web: added the **Situations** tab (`/situations`, nav + route + api types) showing open threads needing the CSM with their storylines + a watching count.
+- [x] 6.5 Updated the two e2e digest assertions to the "situations need you" headline; added `digest-situations` unit test for the union + watching counts.
+
 ## 5. Resolved decisions (see design.md §Decisions — now reflected in specs)
 
 - [x] 5.1 **D1** Observe-only = a Situation, no fifth band. Bands stay four.
