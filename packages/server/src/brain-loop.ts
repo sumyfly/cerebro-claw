@@ -324,6 +324,18 @@ export class BrainLoop {
 		return selected.map((s) => s.item);
 	}
 
+	/**
+	 * Run exactly one cycle on demand (manual trigger / dashboard button). Returns
+	 * the cycle summary, or a busy marker if a cycle is already running. `limit`
+	 * caps the per-sweep fan-out for this run: omitted → cap of 3 (cheap by
+	 * default for dev); 0 → no cap (full run); N>0 → top-N per sweep.
+	 */
+	async runOnce(opts?: { limit?: number }): Promise<CycleSummary | { ran: false; reason: string }> {
+		if (this.running) return { ran: false, reason: "cycle already running" };
+		const cap = opts?.limit === undefined ? 3 : opts.limit;
+		return this.runCycle(cap);
+	}
+
 	start(): void {
 		if (!this.enabled) {
 			console.log("[work-loop] Disabled.");
