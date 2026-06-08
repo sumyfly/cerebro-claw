@@ -279,14 +279,20 @@ export class BrainLoop {
 	}
 
 	/**
-	 * Triage gate: when enabled (triageMax > 0), rank candidates by score and
-	 * keep only the top-N above the floor, logging what was deferred. When
-	 * disabled (triageMax = 0) every candidate is worked — the prior behavior.
+	 * Triage gate: when enabled (max > 0), rank candidates by score and keep only
+	 * the top-N above the floor, logging what was deferred. When disabled (max = 0)
+	 * every candidate is worked. `max` defaults to the configured `triageMax`; a
+	 * manual single cycle passes its own cap to override it for that run only.
 	 */
-	private triageSelect<T>(items: T[], scoreOf: (t: T) => TriageScore, label: string): T[] {
-		if (this.triageMax <= 0 || items.length === 0) return items;
+	private triageSelect<T>(
+		items: T[],
+		scoreOf: (t: T) => TriageScore,
+		label: string,
+		max: number = this.triageMax,
+	): T[] {
+		if (max <= 0 || items.length === 0) return items;
 		const { selected, deferred } = selectByTriage(items, scoreOf, {
-			max: this.triageMax,
+			max,
 			minScore: this.triageMinScore,
 		});
 		if (deferred.length > 0) {
