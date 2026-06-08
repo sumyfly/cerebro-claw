@@ -1,9 +1,17 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { verifyLarkSignature } from "@cerebro-claw/channel-lark";
-import { SqliteActionLedger, SqliteStore } from "@cerebro-claw/memory";
-import type { ActionLedger, CustomerChannel, MemoryStore, TaskSource } from "@cerebro-claw/shared";
-import { StubCustomerChannel, StubTaskSource } from "@cerebro-claw/tools";
+import { SqliteActionLedger, SqliteSituationStore, SqliteStore } from "@cerebro-claw/memory";
+import type {
+	ActionLedger,
+	CustomerChannel,
+	MemoryStore,
+	RenewalSource,
+	SituationStore,
+	TaskSource,
+	Verifier,
+} from "@cerebro-claw/shared";
+import { StubCustomerChannel, StubRenewalSource, StubTaskSource } from "@cerebro-claw/tools";
 import express, { type Express } from "express";
 import { createActionObserver } from "./action-observer.js";
 import type { AgentBackend } from "./agent-backend.js";
@@ -13,19 +21,23 @@ import { createActionPolicyExtension } from "./builtin-extensions/action-policy-
 import { createBashToolExtension } from "./builtin-extensions/bash-tool-extension.js";
 import { createLarkExtension } from "./builtin-extensions/lark-extension.js";
 import { memoryToolsExtension } from "./builtin-extensions/memory-tools-extension.js";
+import { createSituationToolsExtension } from "./builtin-extensions/situation-tools-extension.js";
 import { createTaskToolsExtension } from "./builtin-extensions/task-tools-extension.js";
 import { ClaudeCodeRuntime } from "./claude-code-runtime.js";
 import { loadConfig } from "./config.js";
+import { createCspRenewalSource } from "./csp-renewal-source.js";
 import { createCspTaskSource } from "./csp-task-source.js";
 import { computeDigestCounts, digestHeadline } from "./digest.js";
 import { NotifyThenActDispatcher } from "./dispatcher.js";
 import { resolveOverrideFromStore } from "./engine/overrides.js";
+import { computeTriageScore, selectByTriage } from "./engine/triage.js";
 import { ExtensionHost } from "./extension-host.js";
 import { loadExtensionsFromDir } from "./extension-loader.js";
 import { createMcpHandler } from "./mcp-server.js";
 import { errorHandler, notFoundHandler, requestLogger } from "./middleware.js";
 import { type RecentToolCall, createRecentToolCalls } from "./recent-tools.js";
 import { Router } from "./router.js";
+import { createLlmCriticVerifier } from "./verifier.js";
 
 export interface AppHandles {
 	app: Express;
@@ -63,6 +75,9 @@ export async function createApp(): Promise<AppHandles> {
 
 	// Action ledger — every act / notify / escalate / prep lands here
 	const ledger: ActionLedger = new SqliteActionLedger(config.dbPath);
+
+	// Situation store — persistent storylines so the agent advances, not re-discovers
+	const situationStore: SituationStore = new SqliteSituationStore(config.dbPath);
 
 	// The CSP test backend serves an untrusted/expired TLS cert, which Node's
 	// fetch rejects. CSP_INSECURE_TLS is the opt-in escape hatch for dev/test.
@@ -143,6 +158,43 @@ export async function createApp(): Promise<AppHandles> {
 		console.log("[tasks] No task source configured — task iteration skipped.");
 	}
 
+	// Renewal source — upcoming/at-risk renewals as a first-class swept input.
+	//   RENEWAL_SOURCE=csp   → derive from accounts + per-account renewals (window-filtered)
+	//   RENEWAL_SOURCE=stub  → in-memory demo queue
+	//   unset                → renewal sweep skipped (logged)
+	let renewalSource: RenewalSource | null = null;
+	if (config.renewalSource === "csp") {
+		if (process.env.CSP_TOKEN && process.env.CSP_CSM_EMAIL) {
+			renewalSource = createCspRenewalSource({
+				baseUrl: process.env.CSP_BASE_URL ?? "http://localhost:5656",
+				token: process.env.CSP_TOKEN,
+				csmEmail: process.env.CSP_CSM_EMAIL,
+				windowDays: config.renewalWindowDays,
+			});
+			console.log(`[renewals] Using CspRenewalSource (window=${config.renewalWindowDays}d)`);
+		} else {
+			console.warn(
+				"[renewals] RENEWAL_SOURCE=csp but CSP_TOKEN/CSP_CSM_EMAIL not set — renewal sweep skipped.",
+			);
+		}
+	} else if (config.renewalSource === "stub") {
+		renewalSource = new StubRenewalSource();
+		console.log("[renewals] Using StubRenewalSource (in-memory demo queue)");
+	} else {
+		console.log("[renewals] No renewal source configured — renewal sweep skipped.");
+	}
+
+	// Verifier (critic) — gates notify-then-act / escalate before they commit.
+	// The default critic needs the agent, which is created AFTER extensions load,
+	// so we pass a deferred closure: verify is only ever CALLED at action time,
+	// long after `verifier` is assigned below.
+	const verifyEnabled = !/^(0|false|no)$/i.test(process.env.VERIFY_ENABLED ?? "");
+	const verifyBands = (process.env.VERIFY_BANDS ?? "notify-then-act,escalate")
+		.split(",")
+		.map((s) => s.trim())
+		.filter(Boolean);
+	let verifier: Verifier | null = null;
+
 	// Load extensions: built-in first, then any from the extensions/ directory
 	const userExtensions = await loadExtensionsFromDir(config.extensionsDir);
 	await host.load([
@@ -156,11 +208,19 @@ export async function createApp(): Promise<AppHandles> {
 			// Enforce stored overrides as a hard gate (overrides are taught by the
 			// CSM as instinct notes; resolveOverrideFromStore parses them).
 			resolveOverride: (customerId) => resolveOverrideFromStore(store, customerId),
+			verify: verifyEnabled
+				? (input) =>
+						verifier
+							? verifier.verify(input)
+							: Promise.resolve({ pass: true, reason: "verifier not ready" })
+				: undefined,
+			verifyBands,
 		}),
 		createBashToolExtension({
 			allowlist: config.bashAllowlist,
 			timeoutMs: config.bashTimeoutMs,
 		}),
+		createSituationToolsExtension({ store: situationStore }),
 		// Task tools only register when a task source is configured.
 		...(taskSource ? [createTaskToolsExtension({ source: taskSource, ledger })] : []),
 		lark.extension,
@@ -209,6 +269,14 @@ export async function createApp(): Promise<AppHandles> {
 	);
 	console.log("[runtime] Using claude-code");
 
+	// Now the agent exists — bind the default LLM critic (deferred closure above).
+	if (verifyEnabled) {
+		verifier = createLlmCriticVerifier(agent);
+		console.log(`[verify] Critic enabled for bands: ${verifyBands.join(", ")}`);
+	} else {
+		console.log("[verify] Verification disabled (VERIFY_ENABLED=false).");
+	}
+
 	// Router and brain loop (brain loop emits lifecycle events through the host).
 	// BRAIN_LOOP_ENABLED=false keeps the API/UI up without spawning agent cycles
 	// (useful for UI work, or running the dashboard against live data read-only).
@@ -227,6 +295,7 @@ export async function createApp(): Promise<AppHandles> {
 						? Number(process.env.CSP_MAX_ACCOUNTS)
 						: undefined,
 					store,
+					situationStore,
 				})
 			: undefined;
 
@@ -239,6 +308,10 @@ export async function createApp(): Promise<AppHandles> {
 		cspSource,
 		taskSource,
 		ledger,
+		renewalSource,
+		situationStore,
+		config.triageMax,
+		config.triageMinScore,
 	);
 
 	// Dispatcher — picks up due notify-then-act sends and pushes them through
@@ -345,11 +418,54 @@ export async function createApp(): Promise<AppHandles> {
 		res.json(updated);
 	});
 
-	// "Yesterday: 47 acts, 12 notifies in-flight, 2 escalations need you."
+	// "Yesterday: 47 acts, 12 notifies in-flight, 3 situations need you."
 	app.get("/api/digest/counters", async (req, res) => {
 		const windowHours = Number(req.query.hours ?? 24);
-		const counts = await computeDigestCounts(ledger, new Date(), windowHours);
+		const counts = await computeDigestCounts(ledger, new Date(), windowHours, situationStore);
 		res.json({ headline: digestHeadline(counts), counts });
+	});
+
+	// Situations needing the CSM — open storylines (escalated OR needsAttention),
+	// each joined with its ledger storyline, plus a watching count.
+	app.get("/api/situations", async (_req, res) => {
+		const needing = await situationStore.listNeedingCsm();
+		const watching = await situationStore.listWatching();
+		const items = await Promise.all(
+			needing.map(async (s) => ({
+				...s,
+				storyline: await ledger.listBySituation(s.id),
+			})),
+		);
+		res.json({ needsCsm: items, watchingCount: watching.length });
+	});
+
+	// Triage queue — how the work loop would rank/spend this cycle. Recomputed on
+	// demand from the renewal + task sources (cheap, no model call). Shows the
+	// budget (TRIAGE_MAX/MIN) and which subjects would be deferred and why.
+	app.get("/api/triage", async (_req, res) => {
+		const max = config.triageMax > 0 ? config.triageMax : Number.POSITIVE_INFINITY;
+		const minScore = config.triageMinScore;
+		const renewals = renewalSource ? await renewalSource.listOpen() : [];
+		const tasks = taskSource ? await taskSource.listOpen() : [];
+		const renewalQ = selectByTriage(
+			renewals,
+			(r) =>
+				computeTriageScore({
+					atRisk: r.atRisk,
+					daysToRenewal: r.daysToRenewal,
+					contractValue: r.arr,
+				}),
+			{ max, minScore },
+		);
+		const taskQ = selectByTriage(tasks, (t) => computeTriageScore({ priority: t.priority }), {
+			max,
+			minScore,
+		});
+		res.json({
+			budget: { max: config.triageMax, minScore },
+			renewals: { selected: renewalQ.selected, deferred: renewalQ.deferred },
+			tasks: { selected: taskQ.selected, deferred: taskQ.deferred },
+		});
 	});
 
 	// Task queue for the ops console — open tasks joined with the agent's
@@ -445,6 +561,8 @@ export async function createApp(): Promise<AppHandles> {
 		dispatcher.stop();
 		await host.shutdown();
 		if (ledger instanceof SqliteActionLedger) (ledger as SqliteActionLedger).close();
+		if (situationStore instanceof SqliteSituationStore)
+			(situationStore as SqliteSituationStore).close();
 		if (store instanceof SqliteStore) (store as SqliteStore).close();
 	};
 

@@ -26,6 +26,14 @@ export interface ServerConfig {
 	taskCsmEmail: string;
 	/** Force the in-memory StubTaskSource ("stub") regardless of TASK_API_*. Dev/demo. */
 	taskSource: string;
+	/** Renewal input selection: "csp" (live, reuses CSP_*) / "stub" / unset = renewal sweep skipped. */
+	renewalSource: string;
+	/** Only sweep renewals due within this many days (or at-risk). Default 90 (T-90 onward). */
+	renewalWindowDays: number;
+	/** Triage: max subjects worked per input per cycle. 0 = disabled (work all — current behavior). */
+	triageMax: number;
+	/** Triage: minimum score to be worth an agent turn. */
+	triageMinScore: number;
 }
 
 export function loadConfig(): ServerConfig {
@@ -57,5 +65,9 @@ export function loadConfig(): ServerConfig {
 		taskApiToken: process.env.TASK_API_TOKEN ?? "",
 		taskCsmEmail: process.env.TASK_CSM_EMAIL ?? "",
 		taskSource: process.env.TASK_SOURCE ?? "",
+		renewalSource: process.env.RENEWAL_SOURCE ?? "",
+		renewalWindowDays: Number(process.env.RENEWAL_WINDOW_DAYS ?? 90),
+		triageMax: Number(process.env.TRIAGE_MAX ?? 0),
+		triageMinScore: Number(process.env.TRIAGE_MIN_SCORE ?? 0),
 	};
 }

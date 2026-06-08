@@ -23,6 +23,8 @@ export class InMemoryActionLedger implements ActionLedger {
 			executedAt: input.executedAt,
 			payload: input.payload,
 			note: input.note,
+			situationId: input.situationId,
+			renewalId: input.renewalId,
 		};
 		this.entries.set(entry.id, entry);
 		return entry;
@@ -63,5 +65,11 @@ export class InMemoryActionLedger implements ActionLedger {
 		return Array.from(this.entries.values()).filter(
 			(e) => e.status === "in-flight" || e.status === "needs-csm",
 		);
+	}
+
+	async listBySituation(situationId: string): Promise<ActionLedgerEntry[]> {
+		return Array.from(this.entries.values())
+			.filter((e) => e.situationId === situationId)
+			.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
 	}
 }

@@ -1,3 +1,4 @@
+import type { Situation } from "@cerebro-claw/shared";
 import type { DecisionSignals } from "./signals.js";
 
 /**
@@ -62,5 +63,33 @@ export function renderDecisionContext(signals: DecisionSignals, instincts: strin
 		for (const note of instincts) lines.push(`- ${note}`);
 	}
 
+	return lines.join("\n");
+}
+
+/**
+ * Render the account's open Situations (storylines already in flight) so the
+ * agent advances/resolves them instead of re-discovering the same thing. A
+ * `watching` situation whose checkpoint hasn't passed is an explicit "leave it"
+ * signal — this is the no-re-discovery mechanic, surfaced to the agent.
+ */
+export function renderSituations(situations: Situation[], now: Date): string {
+	if (situations.length === 0) {
+		return '# Open situations\n- none. If you start tracking something (e.g. "watching a renewal"), open a Situation with situation_open — do NOT log it as an `act`.';
+	}
+	const lines = [
+		"# Open situations — ALREADY in flight. Advance/resolve these; do NOT open a duplicate or re-log them as an `act`.",
+	];
+	for (const s of situations) {
+		const checkpoint = s.nextCheckpoint
+			? s.nextCheckpoint > now
+				? ` — checkpoint ${s.nextCheckpoint.toISOString().slice(0, 10)} not yet due: leave unchanged unless signals materially changed`
+				: " — checkpoint DUE: re-evaluate and advance or resolve now"
+			: "";
+		lines.push(
+			`- #${s.id.slice(0, 8)} ${s.kind}/${s.status}: ${s.title}${
+				s.waitingFor ? ` (waiting: ${s.waitingFor})` : ""
+			}${checkpoint}`,
+		);
+	}
 	return lines.join("\n");
 }

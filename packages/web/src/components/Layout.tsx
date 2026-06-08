@@ -2,6 +2,7 @@
 
 import {
 	ApiOutlined,
+	BranchesOutlined,
 	CheckSquareOutlined,
 	NodeIndexOutlined,
 	SettingOutlined,
@@ -22,8 +23,9 @@ interface NavItem {
 }
 
 const NAV: NavItem[] = [
-	{ path: "/", label: "Pipeline", icon: <NodeIndexOutlined /> },
+	{ path: "/", label: "Activity", icon: <NodeIndexOutlined /> },
 	{ path: "/tasks", label: "Tasks", icon: <CheckSquareOutlined /> },
+	{ path: "/situations", label: "Situations", icon: <BranchesOutlined /> },
 	{ path: "/blocked", label: "Blocked", icon: <StopOutlined /> },
 	{ path: "/skills", label: "Intel", icon: <ApiOutlined /> },
 	{ path: "/settings", label: "Config", icon: <SettingOutlined /> },

@@ -111,7 +111,7 @@ describe("Action policy app integration: counters update after a tool runs", () 
 		const res = await request(app).get("/api/digest/counters");
 		expect(res.status).toBe(200);
 		expect(res.body.headline).toBe(
-			"Yesterday: 0 acts, 0 notifies in-flight, 0 escalations need you.",
+			"Yesterday: 0 acts, 0 notifies in-flight, 0 situations need you.",
 		);
 		expect(res.body.counts.acts).toBe(0);
 		expect(res.body.counts.notifies.inFlight).toBe(0);

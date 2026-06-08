@@ -3,7 +3,32 @@ import type {
 	ActionLedgerEntry,
 	CustomerChannel,
 	ToolDefinition,
+	ToolParameterProperty,
+	VerificationInput,
+	VerificationResult,
 } from "@cerebro-claw/shared";
+
+/** Optional link fields shared by every action tool so ledger entries join a Situation storyline. */
+const SITUATION_LINK_PROPS: Record<string, ToolParameterProperty> = {
+	situation_id: {
+		type: "string",
+		description: "Link this action to an open Situation (its id) so it joins that storyline.",
+	},
+	renewal_id: {
+		type: "string",
+		description: "Renewal UUID this action concerns, when renewal-scoped (the CTA join).",
+	},
+};
+
+function situationLink(params: Record<string, unknown>): {
+	situationId?: string;
+	renewalId?: string;
+} {
+	return {
+		situationId: (params.situation_id as string) ?? undefined,
+		renewalId: (params.renewal_id as string) ?? undefined,
+	};
+}
 
 /**
  * Context the action-policy tools need.
@@ -32,6 +57,14 @@ export interface ActionPolicyToolsContext {
 	resolveOverride?: (
 		customerId: string,
 	) => Promise<{ forcesBand?: string } | null> | { forcesBand?: string } | null;
+	/**
+	 * Critic that verifies a high-stakes action before it commits. When it
+	 * returns pass=false the action is blocked (recorded as failed). Absent =
+	 * verification disabled. See `verifyBands` for which bands are gated.
+	 */
+	verify?: (input: VerificationInput) => Promise<VerificationResult>;
+	/** Bands gated by `verify`. Default: notify-then-act + escalate. */
+	verifyBands?: string[];
 }
 
 /** Band severity, low → high. An override forcing a higher band blocks lower ones. */
@@ -80,6 +113,55 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 		};
 	}
 
+	const verifyBands = new Set(ctx.verifyBands ?? ["notify-then-act", "escalate"]);
+
+	/**
+	 * Critic gate. For a band in `verifyBands`, run the verifier; if it fails,
+	 * record the blocked attempt (a `failed` ledger entry carrying the critic's
+	 * reason) and return a failure ToolResult so the action does NOT proceed.
+	 * Returns null when allowed (verification off, band not gated, or passed).
+	 */
+	async function verifyGate(
+		band: string,
+		params: Record<string, unknown>,
+		summary: string,
+		reason: string,
+	) {
+		if (!ctx.verify || !verifyBands.has(band)) return null;
+		const result = await ctx.verify({
+			band,
+			customerId: params.customer_id as string,
+			customerName: (params.customer_name as string) ?? undefined,
+			summary,
+			reason,
+			payload: params as Record<string, unknown>,
+		});
+		if (result.pass) return null;
+		const entry = await ctx.ledger.record({
+			band: band as ActionLedgerEntry["band"],
+			customerId: params.customer_id as string,
+			customerName: (params.customer_name as string) ?? undefined,
+			summary,
+			reason,
+			status: "failed",
+			createdAt: now(),
+			note: `Blocked by verifier: ${result.reason}`,
+			...situationLink(params),
+		});
+		return {
+			content: `Blocked by verifier (#${entry.id.slice(0, 8)}): ${result.reason}${
+				result.suggestedBand ? ` — consider ${result.suggestedBand} instead` : ""
+			}`,
+			success: false,
+			details: {
+				blockedBy: "verifier",
+				reason: result.reason,
+				suggestedBand: result.suggestedBand,
+				actionId: entry.id,
+			},
+		};
+	}
+
 	const act: ToolDefinition = {
 		name: "act",
 		description:
@@ -97,6 +179,7 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 					type: "string",
 					description: "Why this action was warranted (signal + judgment)",
 				},
+				...SITUATION_LINK_PROPS,
 			},
 			required: ["customer_id", "summary", "reason"],
 		},
@@ -113,6 +196,7 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 				status: "done",
 				createdAt: ts,
 				executedAt: ts,
+				...situationLink(params),
 			});
 			return {
 				content: `Act logged (#${entry.id.slice(0, 8)}): ${entry.summary}`,
@@ -154,6 +238,7 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 					type: "string",
 					description: "Override the CSM channel recipient (defaults to DEFAULT_CSM_LARK_USER_ID)",
 				},
+				...SITUATION_LINK_PROPS,
 			},
 			required: ["customer_id", "recipient", "text", "reason"],
 		},
@@ -161,6 +246,14 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 			const blocked = await overrideBlock(params.customer_id as string, "notify-then-act");
 			if (blocked) return blocked;
 			const customerName = (params.customer_name as string) ?? (params.customer_id as string);
+			// Critic gate — verify the send follows from its justification before scheduling.
+			const refused = await verifyGate(
+				"notify-then-act",
+				params,
+				`Send to ${customerName}: ${(params.text as string).slice(0, 100)}`,
+				params.reason as string,
+			);
+			if (refused) return refused;
 			const rawPause = params.pause_minutes as number | undefined;
 			const pauseMin = Math.min(
 				1440,
@@ -188,6 +281,7 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 					text: params.text,
 					channel: (params.channel as string) === "call" ? "call" : "message",
 				},
+				...situationLink(params),
 			});
 
 			// Heads-up to the CSM — they have `pauseMin` minutes to cancel.
@@ -245,11 +339,20 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 					type: "string",
 					description: "Override the CSM channel recipient",
 				},
+				...SITUATION_LINK_PROPS,
 			},
 			required: ["customer_id", "situation", "options", "recommendation"],
 		},
 		async execute(params) {
 			const customerName = (params.customer_name as string) ?? (params.customer_id as string);
+			// Critic gate — verify the escalation is warranted before briefing the CSM.
+			const refused = await verifyGate(
+				"escalate",
+				params,
+				`Escalation: ${customerName} — needs CSM decision`,
+				params.situation as string,
+			);
+			if (refused) return refused;
 			const brief = [
 				`⚠️ Escalation: ${customerName}`,
 				"",
@@ -277,6 +380,7 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 					recommendation: params.recommendation,
 					urgency: params.urgency,
 				},
+				...situationLink(params),
 			});
 
 			try {
@@ -319,6 +423,7 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 					type: "string",
 					description: "Override the CSM channel recipient",
 				},
+				...SITUATION_LINK_PROPS,
 			},
 			required: ["customer_id", "artifact_type", "body"],
 		},
@@ -342,6 +447,7 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 					artifactType: params.artifact_type,
 					body: params.body,
 				},
+				...situationLink(params),
 			});
 
 			try {

@@ -32,10 +32,12 @@ export type {
 
 export type {
 	ActionBand,
+	ActionBandDef,
 	ActionStatus,
 	ActionLedgerEntry,
 	ActionLedger,
 } from "./action.js";
+export { DEFAULT_BANDS } from "./action.js";
 
 export type { CustomerChannel } from "./customer-channel.js";
 
@@ -50,3 +52,21 @@ export type {
 } from "./task.js";
 
 export type { RecentToolCall } from "./recent-tool-call.js";
+
+export type {
+	SituationKind,
+	SituationStatus,
+	Situation,
+	SituationOpenInput,
+	SituationPatch,
+	SituationStore,
+} from "./situation.js";
+export {
+	DEFAULT_CHECKPOINT_MS,
+	resolveNextCheckpoint,
+	situationNeedsCsm,
+} from "./situation.js";
+
+export type { RenewalRecord, RenewalSource } from "./renewal.js";
+
+export type { VerificationInput, VerificationResult, Verifier } from "./verifier.js";
