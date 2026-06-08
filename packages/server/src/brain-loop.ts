@@ -28,6 +28,7 @@ export interface SweepCount {
 
 /** What one cycle did — returned by `runCycle`/`runOnce`. */
 export interface CycleSummary {
+	/** Always true here; the busy path returns `{ ran: false, reason }` instead. */
 	ran: true;
 	/** Effective per-sweep fan-out cap for this run (0 = no cap). */
 	limit: number;
@@ -358,6 +359,9 @@ export class BrainLoop {
 	 * Callers MUST ensure no cycle is already running (`this.running`).
 	 */
 	private async runCycle(cap?: number): Promise<CycleSummary> {
+		if (this.running) {
+			throw new Error("[work-loop] runCycle called while a cycle is already running");
+		}
 		const startedAt = Date.now();
 		this.running = true;
 		console.log(`[work-loop] Cycle starting — source: ${this.source.label}`);
@@ -412,6 +416,11 @@ export class BrainLoop {
 		};
 	}
 
+	/**
+	 * Iterate the CSM's open tasks and work each one. Tasks that already have an
+	 * open ledger action tagged with their id are skipped (mid-flight dedup) — re-
+	 * actioning them would double-fire. `cap` caps per-cycle fan-out.
+	 */
 	private async cycleTasks(cap?: number): Promise<{ summary: SweepCount; actions: number }> {
 		const empty = { summary: { evaluated: 0, available: 0 }, actions: 0 };
 		if (!this.taskSource) return empty;
@@ -441,6 +450,8 @@ export class BrainLoop {
 			actions += await this.evaluateTask(task);
 		}
 		console.log(`[work-loop] Tasks: ${worked.length} evaluated, ${skipped} skipped (mid-flight)`);
+		// `available` is post-dedup (eligible) tasks, not the raw queue — mid-flight
+		// tasks are intentionally excluded since they can't be worked this cycle.
 		return { summary: { evaluated: worked.length, available: open.length }, actions };
 	}
 
@@ -484,6 +495,11 @@ ${TASK_GUIDANCE}`;
 		}
 	}
 
+	/**
+	 * Renewal sweep — iterate the CSM's open (upcoming/at-risk) renewals and work
+	 * each on its timeline, independent of the account and task sweeps. `cap` caps
+	 * per-cycle fan-out.
+	 */
 	private async cycleRenewals(cap?: number): Promise<{ summary: SweepCount; actions: number }> {
 		const empty = { summary: { evaluated: 0, available: 0 }, actions: 0 };
 		if (!this.renewalSource) return empty;
