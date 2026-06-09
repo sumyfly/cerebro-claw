@@ -29,8 +29,8 @@ export function App() {
 				<Routes>
 					<Route element={<AppLayout />}>
 						<Route path="/" element={<Pipeline />} />
-						<Route path="/situations" element={<Situations />} />
-						<Route path="/escalations" element={<Escalations />} />
+						<Route path="/situation" element={<Situations />} />
+						<Route path="/escalation" element={<Escalations />} />
 						<Route path="/skills" element={<Skills />} />
 						<Route path="/settings" element={<Settings />} />
 					</Route>
