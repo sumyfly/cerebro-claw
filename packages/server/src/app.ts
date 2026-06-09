@@ -312,6 +312,7 @@ export async function createApp(): Promise<AppHandles> {
 		situationStore,
 		config.triageMax,
 		config.triageMinScore,
+		config.brainLoopRunOnStart,
 	);
 
 	// Dispatcher — picks up due notify-then-act sends and pushes them through
@@ -466,6 +467,24 @@ export async function createApp(): Promise<AppHandles> {
 			renewals: { selected: renewalQ.selected, deferred: renewalQ.deferred },
 			tasks: { selected: taskQ.selected, deferred: taskQ.deferred },
 		});
+	});
+
+	// Manual single-cycle trigger — runs one work-loop cycle on demand. Lets the
+	// loop stay disabled (BRAIN_LOOP_ENABLED=false) yet still be testable for cents
+	// during development. ?limit caps per-sweep fan-out (omitted = 3, 0 = no cap).
+	app.post("/api/brain/cycle", async (req, res) => {
+		const raw = req.query.limit;
+		let limit: number | undefined;
+		if (raw !== undefined) {
+			const n = Number(raw);
+			limit = Number.isFinite(n) && n >= 0 ? n : undefined;
+		}
+		const result = await brainLoop.runOnce({ limit });
+		if (result.ran === false) {
+			res.status(409).json(result);
+			return;
+		}
+		res.json(result);
 	});
 
 	// Task queue for the ops console — open tasks joined with the agent's

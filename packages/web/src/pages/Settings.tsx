@@ -3,7 +3,14 @@
 
 import { useEffect, useState } from "react";
 import { Panel } from "../components/primitives.js";
-import { type Diagnostics, type ExtensionInfo, getJson } from "../lib/api.js";
+import {
+	type CycleSummary,
+	type Diagnostics,
+	type ExtensionInfo,
+	HttpError,
+	getJson,
+	postJson,
+} from "../lib/api.js";
 import { COLOR } from "../lib/status.js";
 
 const DIAG_LABEL: Record<string, string> = {
@@ -34,6 +41,70 @@ function KV({ k, v }: { k: string; v: string | number }) {
 			<span className="key">{k}</span>
 			<span className="val">{v}</span>
 		</div>
+	);
+}
+
+function WorkLoopPanel() {
+	const [limit, setLimit] = useState(3);
+	const [running, setRunning] = useState(false);
+	const [summary, setSummary] = useState<CycleSummary | null>(null);
+	const [error, setError] = useState<string | null>(null);
+
+	async function runCycle() {
+		setRunning(true);
+		setError(null);
+		setSummary(null);
+		try {
+			const res = await postJson<CycleSummary>(`/api/brain/cycle?limit=${limit}`, {});
+			setSummary(res);
+		} catch (err) {
+			if (err instanceof HttpError && err.status === 409) {
+				setError("A cycle is already running — try again in a moment.");
+			} else {
+				setError(err instanceof Error ? err.message : String(err));
+			}
+		} finally {
+			setRunning(false);
+		}
+	}
+
+	return (
+		<Panel title="WORK LOOP" delay={260}>
+			<div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+				<button type="button" className="cc-btn" disabled={running} onClick={runCycle}>
+					{running ? "RUNNING…" : "RUN ONE CYCLE"}
+				</button>
+				<label className="cc-kv" style={{ gap: 6 }}>
+					<span className="key">limit</span>
+					<input
+						type="number"
+						min={0}
+						value={limit}
+						disabled={running}
+						onChange={(e) => setLimit(Math.max(0, Number(e.target.value) || 0))}
+						style={{ width: 56 }}
+					/>
+				</label>
+				<span className="val" style={{ color: COLOR.grey }}>
+					0 = full run
+				</span>
+			</div>
+			{error && (
+				<div className="val" style={{ color: COLOR.danger }}>
+					{error}
+				</div>
+			)}
+			{summary && (
+				<>
+					<KV k="cap" v={summary.limit === 0 ? "none" : summary.limit} />
+					<KV k="accounts" v={`${summary.accounts.evaluated}/${summary.accounts.available}`} />
+					<KV k="tasks" v={`${summary.tasks.evaluated}/${summary.tasks.available}`} />
+					<KV k="renewals" v={`${summary.renewals.evaluated}/${summary.renewals.available}`} />
+					<KV k="actions taken" v={summary.actionsTaken} />
+					<KV k="duration" v={`${(summary.durationMs / 1000).toFixed(1)}s`} />
+				</>
+			)}
+		</Panel>
 	);
 }
 
@@ -106,6 +177,8 @@ export function Settings() {
 							)}
 						</div>
 					</Panel>
+
+					<WorkLoopPanel />
 				</div>
 			</div>
 		</>

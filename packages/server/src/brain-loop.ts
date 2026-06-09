@@ -20,6 +20,25 @@ export interface EventEmitter {
 	emit<T = unknown>(event: ExtensionEvent, payload: T): Promise<void>;
 }
 
+/** Per-sweep tally: how many subjects were worked vs. how many were eligible. */
+export interface SweepCount {
+	evaluated: number;
+	available: number;
+}
+
+/** What one cycle did — returned by `runCycle`/`runOnce`. */
+export interface CycleSummary {
+	/** Always true here; the busy path returns `{ ran: false, reason }` instead. */
+	ran: true;
+	/** Effective per-sweep fan-out cap for this run (0 = no cap). */
+	limit: number;
+	accounts: SweepCount;
+	tasks: SweepCount;
+	renewals: SweepCount;
+	actionsTaken: number;
+	durationMs: number;
+}
+
 /**
  * What the brain loop iterates over each cycle. Implementations decide where
  * accounts come from — the local SqliteStore (demo mode) or the live CSP
@@ -249,6 +268,7 @@ export class BrainLoop {
 	private situationStore: SituationStore | null;
 	private triageMax: number;
 	private triageMinScore: number;
+	private runOnStart: boolean;
 
 	constructor(
 		store: MemoryStore,
@@ -263,6 +283,7 @@ export class BrainLoop {
 		situationStore: SituationStore | null = null,
 		triageMax = 0,
 		triageMinScore = 0,
+		runOnStart = false,
 	) {
 		this.store = store;
 		this.agent = agent;
@@ -276,17 +297,24 @@ export class BrainLoop {
 		this.situationStore = situationStore;
 		this.triageMax = triageMax;
 		this.triageMinScore = triageMinScore;
+		this.runOnStart = runOnStart;
 	}
 
 	/**
-	 * Triage gate: when enabled (triageMax > 0), rank candidates by score and
-	 * keep only the top-N above the floor, logging what was deferred. When
-	 * disabled (triageMax = 0) every candidate is worked — the prior behavior.
+	 * Triage gate: when enabled (max > 0), rank candidates by score and keep only
+	 * the top-N above the floor, logging what was deferred. When disabled (max = 0)
+	 * every candidate is worked. `max` defaults to the configured `triageMax`; a
+	 * manual single cycle passes its own cap to override it for that run only.
 	 */
-	private triageSelect<T>(items: T[], scoreOf: (t: T) => TriageScore, label: string): T[] {
-		if (this.triageMax <= 0 || items.length === 0) return items;
+	private triageSelect<T>(
+		items: T[],
+		scoreOf: (t: T) => TriageScore,
+		label: string,
+		max: number = this.triageMax,
+	): T[] {
+		if (max <= 0 || items.length === 0) return items;
 		const { selected, deferred } = selectByTriage(items, scoreOf, {
-			max: this.triageMax,
+			max,
 			minScore: this.triageMinScore,
 		});
 		if (deferred.length > 0) {
@@ -299,6 +327,18 @@ export class BrainLoop {
 		return selected.map((s) => s.item);
 	}
 
+	/**
+	 * Run exactly one cycle on demand (manual trigger / dashboard button). Returns
+	 * the cycle summary, or a busy marker if a cycle is already running. `limit`
+	 * caps the per-sweep fan-out for this run: omitted → cap of 3 (cheap by
+	 * default for dev); 0 → no cap (full run); N>0 → top-N per sweep.
+	 */
+	async runOnce(opts?: { limit?: number }): Promise<CycleSummary | { ran: false; reason: string }> {
+		if (this.running) return { ran: false, reason: "cycle already running" };
+		const cap = opts?.limit === undefined ? 3 : opts.limit;
+		return this.runCycle(cap);
+	}
+
 	start(): void {
 		if (!this.enabled) {
 			console.log("[work-loop] Disabled.");
@@ -307,7 +347,7 @@ export class BrainLoop {
 		if (this.timer) return;
 		console.log(`[work-loop] Starting — cycle every ${this.intervalMs / 1000}s`);
 		this.timer = setInterval(() => this.cycle(), this.intervalMs);
-		this.cycle();
+		if (this.runOnStart) this.cycle();
 	}
 
 	stop(): void {
@@ -318,15 +358,34 @@ export class BrainLoop {
 		console.log("[work-loop] Stopped");
 	}
 
+	/** Interval-driven cycle: guards against overlap, ignores the summary. */
 	private async cycle(): Promise<void> {
 		if (this.running) {
 			console.log("[work-loop] Previous cycle still running, skipping");
 			return;
 		}
+		await this.runCycle();
+	}
 
+	/**
+	 * Run one full cycle (accounts → tasks → renewals) and return a summary.
+	 * `cap` overrides the per-sweep fan-out for this run: undefined → use the
+	 * configured triageMax; 0 → no cap (work all); N>0 → top-N per sweep.
+	 * Callers MUST ensure no cycle is already running (`this.running`).
+	 */
+	private async runCycle(cap?: number): Promise<CycleSummary> {
+		if (this.running) {
+			throw new Error("[work-loop] runCycle called while a cycle is already running");
+		}
+		const startedAt = Date.now();
 		this.running = true;
 		console.log(`[work-loop] Cycle starting — source: ${this.source.label}`);
-		await this.emitter?.emit("brain_loop_cycle_start", { ts: Date.now() });
+		await this.emitter?.emit("brain_loop_cycle_start", { ts: startedAt });
+
+		let actionsTaken = 0;
+		let accounts: SweepCount = { evaluated: 0, available: 0 };
+		let tasks: SweepCount = { evaluated: 0, available: 0 };
+		let renewals: SweepCount = { evaluated: 0, available: 0 };
 
 		try {
 			// 1) Accounts — the change-detection sweep over the CSM's portfolio.
@@ -334,23 +393,23 @@ export class BrainLoop {
 			if (allAccounts.length === 0) {
 				console.log("[work-loop] No customers from source");
 			}
-			// Triage caps how many accounts get an agent turn per cycle. Account list
-			// records carry no signals, so they score neutral — this is a budget cap;
-			// ranking sharpens once the source supplies triage fields.
-			const accounts = this.triageSelect(allAccounts, () => computeTriageScore({}), "Accounts");
-			for (const a of accounts) {
-				await this.evaluateCustomer(a.id, a.companyName);
+			const worked = this.triageSelect(allAccounts, () => computeTriageScore({}), "Accounts", cap);
+			for (const a of worked) {
+				actionsTaken += await this.evaluateCustomer(a.id, a.companyName);
 			}
+			accounts = { evaluated: worked.length, available: allAccounts.length };
 
-			// 2) Tasks — the CSM's actual work queue. Independent of accounts: an
-			// empty portfolio must not stop task work, and vice versa.
-			await this.cycleTasks();
+			// 2) Tasks — independent of accounts.
+			const taskRes = await this.cycleTasks(cap);
+			tasks = taskRes.summary;
+			actionsTaken += taskRes.actions;
 
-			// 3) Renewals — the highest-value, time-sensitive work, swept directly.
-			// Independent of accounts and tasks.
-			await this.cycleRenewals();
+			// 3) Renewals — independent of accounts and tasks.
+			const renewalRes = await this.cycleRenewals(cap);
+			renewals = renewalRes.summary;
+			actionsTaken += renewalRes.actions;
 
-			if (accounts.length === 0 && !this.taskSource && !this.renewalSource) {
+			if (worked.length === 0 && !this.taskSource && !this.renewalSource) {
 				console.log("[work-loop] Nothing to do this cycle");
 			}
 		} catch (err) {
@@ -360,41 +419,55 @@ export class BrainLoop {
 			console.log("[work-loop] Cycle complete");
 			await this.emitter?.emit("brain_loop_cycle_end", { ts: Date.now() });
 		}
+
+		return {
+			ran: true,
+			limit: cap ?? this.triageMax,
+			accounts,
+			tasks,
+			renewals,
+			actionsTaken,
+			durationMs: Date.now() - startedAt,
+		};
 	}
 
 	/**
 	 * Iterate the CSM's open tasks and work each one. Tasks that already have an
-	 * open action in the ledger (a needs-csm escalation or an in-flight notify
-	 * tagged with the task id) are skipped — they're mid-flight, re-actioning
-	 * them would double-fire. This is the ledger task-id link doing dedup.
+	 * open ledger action tagged with their id are skipped (mid-flight dedup) — re-
+	 * actioning them would double-fire. `cap` caps per-cycle fan-out.
 	 */
-	private async cycleTasks(): Promise<void> {
-		if (!this.taskSource) return;
+	private async cycleTasks(cap?: number): Promise<{ summary: SweepCount; actions: number }> {
+		const empty = { summary: { evaluated: 0, available: 0 }, actions: 0 };
+		if (!this.taskSource) return empty;
 		let tasks: Awaited<ReturnType<TaskSource["listOpen"]>>;
 		try {
 			tasks = await this.taskSource.listOpen();
 		} catch (err) {
 			console.error(`[work-loop] Task list error: ${(err as Error).message}`);
-			return;
+			return empty;
 		}
 		if (tasks.length === 0) {
 			console.log("[work-loop] No open tasks");
-			return;
+			return empty;
 		}
 
 		const inFlight = await this.tasksWithOpenActions();
 		const open = tasks.filter((t) => !inFlight.has(t.id));
 		const skipped = tasks.length - open.length;
-		// Triage: work the highest-priority tasks first, under budget.
 		const worked = this.triageSelect(
 			open,
 			(t) => computeTriageScore({ priority: t.priority }),
 			"Tasks",
+			cap,
 		);
+		let actions = 0;
 		for (const task of worked) {
-			await this.evaluateTask(task);
+			actions += await this.evaluateTask(task);
 		}
 		console.log(`[work-loop] Tasks: ${worked.length} evaluated, ${skipped} skipped (mid-flight)`);
+		// `available` is post-dedup (eligible) tasks, not the raw queue — mid-flight
+		// tasks are intentionally excluded since they can't be worked this cycle.
+		return { summary: { evaluated: worked.length, available: open.length }, actions };
 	}
 
 	/** Task ids that already have an open (in-flight / needs-csm) ledger action. */
@@ -412,7 +485,7 @@ export class BrainLoop {
 		return ids;
 	}
 
-	private async evaluateTask(task: { id: string; title: string }): Promise<void> {
+	private async evaluateTask(task: { id: string; title: string }): Promise<number> {
 		const full = (await this.taskSource?.getContext(task.id)) ?? null;
 		const context = full
 			? renderTaskContext(full)
@@ -429,31 +502,33 @@ ${TASK_GUIDANCE}`;
 			if (response.toolCalls.length > 0) {
 				console.log(`[work-loop] task ${task.id}: ${response.toolCalls.length} actions taken`);
 			}
+			return response.toolCalls.length;
 		} catch (err) {
 			const detail = err instanceof Error ? err.message : String(err);
 			console.error(`[work-loop] Error evaluating task ${task.id}: ${detail}`);
+			return 0;
 		}
 	}
 
 	/**
 	 * Renewal sweep — iterate the CSM's open (upcoming/at-risk) renewals and work
-	 * each on its timeline. Independent of the account and task sweeps. Each
-	 * renewal converges on the single per-renewalId `renewal-risk` Situation.
+	 * each on its timeline, independent of the account and task sweeps. `cap` caps
+	 * per-cycle fan-out.
 	 */
-	private async cycleRenewals(): Promise<void> {
-		if (!this.renewalSource) return;
+	private async cycleRenewals(cap?: number): Promise<{ summary: SweepCount; actions: number }> {
+		const empty = { summary: { evaluated: 0, available: 0 }, actions: 0 };
+		if (!this.renewalSource) return empty;
 		let renewals: Awaited<ReturnType<RenewalSource["listOpen"]>>;
 		try {
 			renewals = await this.renewalSource.listOpen();
 		} catch (err) {
 			console.error(`[work-loop] Renewal list error: ${(err as Error).message}`);
-			return;
+			return empty;
 		}
 		if (renewals.length === 0) {
 			console.log("[work-loop] No open renewals");
-			return;
+			return empty;
 		}
-		// Triage: work the highest risk × value × urgency renewals first, under budget.
 		const worked = this.triageSelect(
 			renewals,
 			(r) =>
@@ -463,22 +538,23 @@ ${TASK_GUIDANCE}`;
 					contractValue: r.arr,
 				}),
 			"Renewals",
+			cap,
 		);
+		let actions = 0;
 		for (const renewal of worked) {
-			await this.evaluateRenewal(renewal.id);
+			actions += await this.evaluateRenewal(renewal.id);
 		}
 		console.log(`[work-loop] Renewals: ${worked.length} evaluated`);
+		return { summary: { evaluated: worked.length, available: renewals.length }, actions };
 	}
 
-	private async evaluateRenewal(id: string): Promise<void> {
+	private async evaluateRenewal(id: string): Promise<number> {
 		const full = (await this.renewalSource?.getContext(id)) ?? null;
 		if (!full) {
 			console.error(`[work-loop] Renewal ${id} has no context — skipping`);
-			return;
+			return 0;
 		}
 		const renewalContext = renderRenewalContext(full);
-		// Inject the account's open situations so the agent advances the renewal's
-		// storyline instead of re-discovering it (convergence by renewalId).
 		const situations = this.situationStore
 			? await this.situationStore.listOpen(full.businessId)
 			: [];
@@ -497,13 +573,15 @@ ${RENEWAL_GUIDANCE}`;
 			if (response.toolCalls.length > 0) {
 				console.log(`[work-loop] renewal ${id}: ${response.toolCalls.length} actions taken`);
 			}
+			return response.toolCalls.length;
 		} catch (err) {
 			const detail = err instanceof Error ? err.message : String(err);
 			console.error(`[work-loop] Error evaluating renewal ${id}: ${detail}`);
+			return 0;
 		}
 	}
 
-	private async evaluateCustomer(customerId: string, companyName: string): Promise<void> {
+	private async evaluateCustomer(customerId: string, companyName: string): Promise<number> {
 		const summary = await this.source.buildSummary(customerId, companyName);
 
 		const prompt = `You are reviewing customer "${companyName}". Decide if any action is needed right now.
@@ -519,12 +597,13 @@ If nothing needs doing, say "No action needed for ${companyName}." and move on.`
 			if (response.toolCalls.length > 0) {
 				console.log(`[work-loop] ${companyName}: ${response.toolCalls.length} actions taken`);
 			}
+			return response.toolCalls.length;
 		} catch (err) {
 			const detail = err instanceof Error ? err.message : String(err);
 			console.error(`[work-loop] Error evaluating ${companyName}: ${detail}`);
+			return 0;
 		} finally {
-			// Persist this cycle's signal snapshot exactly once, after the review —
-			// never from buildSummary (which may run several times per cycle).
+			// Persist this cycle's signal snapshot exactly once, after the review.
 			await this.source.onEvaluated?.(customerId);
 		}
 	}
