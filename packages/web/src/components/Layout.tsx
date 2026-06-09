@@ -24,7 +24,7 @@ interface NavItem {
 const NAV: NavItem[] = [
 	{ path: "/", label: "Activity", icon: <NodeIndexOutlined /> },
 	{ path: "/situations", label: "Situations", icon: <BranchesOutlined /> },
-	{ path: "/blocked", label: "Blocked", icon: <StopOutlined /> },
+	{ path: "/escalations", label: "Escalations", icon: <StopOutlined /> },
 	{ path: "/skills", label: "Intel", icon: <ApiOutlined /> },
 	{ path: "/settings", label: "Config", icon: <SettingOutlined /> },
 ];
@@ -51,7 +51,7 @@ export function AppLayout() {
 	const live =
 		lastSuccessAt !== null && Date.now() - new Date(lastSuccessAt).getTime() < COUNTERS_POLL_MS * 2;
 
-	const blocked = counters?.counts?.escalations?.needsCsm ?? 0;
+	const escalationCount = counters?.counts?.escalations?.needsCsm ?? 0;
 
 	return (
 		<div className="cc-root" style={{ display: "flex", minHeight: "100vh" }}>
@@ -59,7 +59,7 @@ export function AppLayout() {
 				{NAV.map((item) => {
 					const active =
 						item.path === "/" ? location.pathname === "/" : location.pathname.startsWith(item.path);
-					const showBadge = item.path === "/blocked" && blocked > 0;
+					const showBadge = item.path === "/escalations" && escalationCount > 0;
 					return (
 						<button
 							type="button"
@@ -67,7 +67,7 @@ export function AppLayout() {
 							className={`cc-rail-item${active ? " active" : ""}`}
 							onClick={() => navigate(item.path)}
 						>
-							{showBadge && <span className="cc-rail-badge ring">{blocked}</span>}
+							{showBadge && <span className="cc-rail-badge ring">{escalationCount}</span>}
 							{item.icon}
 							<span className="cc-rail-label">{item.label}</span>
 						</button>

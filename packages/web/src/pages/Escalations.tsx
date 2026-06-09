@@ -1,4 +1,4 @@
-/** Blocked — escalations awaiting the human (escalate band, needs-csm status).
+/** Escalations — decisions awaiting the human (escalate band, needs-csm status).
  * Reads GET /api/ledger/open. Resolve via POST /api/ledger/:id/resolve {outcome}. */
 
 import { CheckCircleOutlined, SafetyCertificateOutlined } from "@ant-design/icons";
@@ -23,7 +23,7 @@ function EscBlock({ label, value, rec }: { label: string; value: string; rec?: b
 	);
 }
 
-export function Blocked() {
+export function Escalations() {
 	const [active, setActive] = useState<LedgerEntry | null>(null);
 	const [outcome, setOutcome] = useState("");
 	const [saving, setSaving] = useState(false);
@@ -56,7 +56,7 @@ export function Blocked() {
 	if (loaded && items.length === 0) {
 		return (
 			<>
-				<h1 className="cc-page-title">BLOCKED — AWAITING CSM DECISION</h1>
+				<h1 className="cc-page-title">ESCALATIONS — AWAITING CSM DECISION</h1>
 				<div className="cc-empty">
 					<SafetyCertificateOutlined className="glyph" />
 					<div className="line">NO ESCALATIONS — ALL CLEAR</div>
@@ -69,7 +69,7 @@ export function Blocked() {
 	return (
 		<>
 			<h1 className="cc-page-title">
-				BLOCKED — AWAITING CSM DECISION{" "}
+				ESCALATIONS — AWAITING CSM DECISION{" "}
 				<span className="cc-id mono" style={{ color: COLOR.danger }}>
 					[{items.length}]
 				</span>
