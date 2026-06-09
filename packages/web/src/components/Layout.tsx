@@ -23,8 +23,8 @@ interface NavItem {
 
 const NAV: NavItem[] = [
 	{ path: "/", label: "Activity", icon: <NodeIndexOutlined /> },
-	{ path: "/situations", label: "Situations", icon: <BranchesOutlined /> },
-	{ path: "/escalations", label: "Escalations", icon: <StopOutlined /> },
+	{ path: "/situations", label: "Situation", icon: <BranchesOutlined /> },
+	{ path: "/escalations", label: "Escalation", icon: <StopOutlined /> },
 	{ path: "/skills", label: "Intel", icon: <ApiOutlined /> },
 	{ path: "/settings", label: "Config", icon: <SettingOutlined /> },
 ];
