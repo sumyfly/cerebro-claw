@@ -2,10 +2,10 @@
 
 import {
 	ApiOutlined,
-	BranchesOutlined,
+	EyeOutlined,
 	NodeIndexOutlined,
 	SettingOutlined,
-	StopOutlined,
+	WarningOutlined,
 } from "@ant-design/icons";
 import { type ReactNode, useEffect, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
@@ -23,8 +23,8 @@ interface NavItem {
 
 const NAV: NavItem[] = [
 	{ path: "/", label: "Activity", icon: <NodeIndexOutlined /> },
-	{ path: "/situations", label: "Situation", icon: <BranchesOutlined /> },
-	{ path: "/escalations", label: "Escalation", icon: <StopOutlined /> },
+	{ path: "/situation", label: "Situation", icon: <EyeOutlined /> },
+	{ path: "/escalation", label: "Escalation", icon: <WarningOutlined /> },
 	{ path: "/skills", label: "Intel", icon: <ApiOutlined /> },
 	{ path: "/settings", label: "Config", icon: <SettingOutlined /> },
 ];
@@ -59,7 +59,7 @@ export function AppLayout() {
 				{NAV.map((item) => {
 					const active =
 						item.path === "/" ? location.pathname === "/" : location.pathname.startsWith(item.path);
-					const showBadge = item.path === "/escalations" && escalationCount > 0;
+					const showBadge = item.path === "/escalation" && escalationCount > 0;
 					return (
 						<button
 							type="button"
