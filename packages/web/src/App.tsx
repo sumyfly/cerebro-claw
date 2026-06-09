@@ -1,7 +1,7 @@
 import { ConfigProvider, theme } from "antd";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { AppLayout } from "./components/Layout.js";
-import { Blocked } from "./pages/Blocked.js";
+import { Escalations } from "./pages/Escalations.js";
 import { Pipeline } from "./pages/Pipeline.js";
 import { Settings } from "./pages/Settings.js";
 import { Situations } from "./pages/Situations.js";
@@ -30,7 +30,7 @@ export function App() {
 					<Route element={<AppLayout />}>
 						<Route path="/" element={<Pipeline />} />
 						<Route path="/situations" element={<Situations />} />
-						<Route path="/blocked" element={<Blocked />} />
+						<Route path="/escalations" element={<Escalations />} />
 						<Route path="/skills" element={<Skills />} />
 						<Route path="/settings" element={<Settings />} />
 					</Route>

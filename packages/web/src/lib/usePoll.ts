@@ -2,7 +2,7 @@
  * Shared polling hook. Each tick fetches `url` via getJson with a fresh
  * AbortController; the in-flight request is aborted on unmount and before every
  * new tick, so a slow/stale response can never overwrite newer state (this is
- * what kills the Blocked re-introduce race and the request pile-up).
+ * what kills the Escalations re-introduce race and the request pile-up).
  *
  * - `available` starts true and flips false on HTTP 404 (lets the Skills
  *   /api/tools/recent feed degrade quietly before the endpoint ships).
