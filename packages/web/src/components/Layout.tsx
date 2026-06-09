@@ -5,7 +5,7 @@ import {
 	EyeOutlined,
 	NodeIndexOutlined,
 	SettingOutlined,
-	WarningOutlined,
+	UserOutlined,
 } from "@ant-design/icons";
 import { type ReactNode, useEffect, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
@@ -24,7 +24,7 @@ interface NavItem {
 const NAV: NavItem[] = [
 	{ path: "/", label: "Activity", icon: <NodeIndexOutlined /> },
 	{ path: "/situation", label: "Situation", icon: <EyeOutlined /> },
-	{ path: "/escalation", label: "Escalation", icon: <WarningOutlined /> },
+	{ path: "/escalation", label: "Escalation", icon: <UserOutlined /> },
 	{ path: "/skills", label: "Intel", icon: <ApiOutlined /> },
 	{ path: "/settings", label: "Config", icon: <SettingOutlined /> },
 ];
