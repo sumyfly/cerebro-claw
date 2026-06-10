@@ -36,6 +36,16 @@ export interface ServerConfig {
 	triageMax: number;
 	/** Triage: minimum score to be worth an agent turn. */
 	triageMinScore: number;
+	/** Skip gate: unchanged accounts skip their agent turn. SKIP_GATE=off disables. */
+	skipGateEnabled: boolean;
+	/** Skip gate: a renewal within this many days always bypasses the gate. */
+	skipGateRenewalHorizonDays: number;
+	/** Skip gate: force a review after this many days skipped, even if unchanged. */
+	skipGateMaxAgeDays: number;
+	/** Max concurrent agent turns within a sweep. 1 = serial. */
+	brainConcurrency: number;
+	/** Model for the critic verifier (cheap/fast). Unset = share the main agent. */
+	verifierModel: string;
 }
 
 export function loadConfig(): ServerConfig {
@@ -72,5 +82,13 @@ export function loadConfig(): ServerConfig {
 		renewalWindowDays: Number(process.env.RENEWAL_WINDOW_DAYS ?? 90),
 		triageMax: Number(process.env.TRIAGE_MAX ?? 0),
 		triageMinScore: Number(process.env.TRIAGE_MIN_SCORE ?? 0),
+		skipGateEnabled: !/^(0|off|false|no)$/i.test(process.env.SKIP_GATE ?? ""),
+		skipGateRenewalHorizonDays: Number(process.env.SKIP_GATE_RENEWAL_HORIZON_DAYS ?? 90),
+		skipGateMaxAgeDays: Number(process.env.SKIP_GATE_MAX_AGE_DAYS ?? 7),
+		brainConcurrency: (() => {
+			const n = Number(process.env.BRAIN_CONCURRENCY ?? 3);
+			return Number.isFinite(n) ? Math.max(1, Math.floor(n)) : 3;
+		})(),
+		verifierModel: process.env.VERIFIER_MODEL ?? "",
 	};
 }

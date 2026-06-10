@@ -41,6 +41,7 @@ function renewalAgent(tools: Map<string, ToolDefinition>) {
 				customer_id: BIZ,
 				summary: "Posted renewal status nudge",
 				reason: "Renewal 16d out, at risk",
+				evidence: { kind: "renewal", id: RENEWAL_ID },
 				situation_id: situationId,
 				renewal_id: RENEWAL_ID,
 			});

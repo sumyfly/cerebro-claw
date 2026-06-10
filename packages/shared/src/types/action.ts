@@ -123,4 +123,10 @@ export interface ActionLedger {
 
 	/** All entries linked to a situation, chronological — the situation's storyline. */
 	listBySituation(situationId: string): Promise<ActionLedgerEntry[]>;
+
+	/**
+	 * The most recent entries for one customer, newest first — feeds the agent's
+	 * per-account decision context so it observes its own past actions' outcomes.
+	 */
+	listRecentByCustomer(customerId: string, limit: number): Promise<ActionLedgerEntry[]>;
 }

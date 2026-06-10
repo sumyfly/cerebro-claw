@@ -1,4 +1,4 @@
-import type { Situation } from "@cerebro-claw/shared";
+import type { ActionLedgerEntry, Situation } from "@cerebro-claw/shared";
 import type { DecisionSignals } from "./signals.js";
 
 /**
@@ -63,6 +63,26 @@ export function renderDecisionContext(signals: DecisionSignals, instincts: strin
 		for (const note of instincts) lines.push(`- ${note}`);
 	}
 
+	return lines.join("\n");
+}
+
+/**
+ * Render the account's recent ledger entries so the agent observes the
+ * outcomes of its own past actions (the closed loop): chase a send that got no
+ * response, retry or escalate a failure, and never repeat an in-flight touch.
+ */
+export function renderRecentActions(entries: ActionLedgerEntry[], now: Date): string {
+	if (entries.length === 0) return "";
+	const lines = [
+		"# Recent agent actions on this account (your own past work — newest first)",
+		"Use these to follow through: chase a send with no response, address failures, and do NOT repeat work already done or in flight.",
+	];
+	for (const e of entries) {
+		const ageDays = Math.max(0, Math.floor((now.getTime() - e.createdAt.getTime()) / 86_400_000));
+		const age = ageDays === 0 ? "today" : `${ageDays}d ago`;
+		const failure = e.status === "failed" && e.note ? ` — FAILED: ${e.note}` : "";
+		lines.push(`- [${e.band}/${e.status}] ${age}: ${e.summary}${failure}`);
+	}
 	return lines.join("\n");
 }
 

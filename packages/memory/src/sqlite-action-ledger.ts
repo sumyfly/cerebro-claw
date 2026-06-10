@@ -71,6 +71,9 @@ export class SqliteActionLedger implements ActionLedger {
 			}
 		}
 		this.db.exec("CREATE INDEX IF NOT EXISTS idx_ledger_situation ON action_ledger(situation_id)");
+		this.db.exec(
+			"CREATE INDEX IF NOT EXISTS idx_ledger_customer_created ON action_ledger(customer_id, created_at)",
+		);
 	}
 
 	async record(
@@ -183,6 +186,13 @@ export class SqliteActionLedger implements ActionLedger {
 		const rows = this.db
 			.prepare("SELECT * FROM action_ledger WHERE situation_id = ? ORDER BY created_at")
 			.all(situationId) as Row[];
+		return rows.map((r) => this.toEntry(r));
+	}
+
+	async listRecentByCustomer(customerId: string, limit: number): Promise<ActionLedgerEntry[]> {
+		const rows = this.db
+			.prepare("SELECT * FROM action_ledger WHERE customer_id = ? ORDER BY created_at DESC LIMIT ?")
+			.all(customerId, Math.max(0, Math.floor(limit))) as Row[];
 		return rows.map((r) => this.toEntry(r));
 	}
 

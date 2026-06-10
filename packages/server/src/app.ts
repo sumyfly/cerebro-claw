@@ -12,7 +12,7 @@ import type {
 	Verifier,
 } from "@cerebro-claw/shared";
 import { StubCustomerChannel, StubRenewalSource, StubTaskSource } from "@cerebro-claw/tools";
-import express, { type Express } from "express";
+import express, { type Express, type Request, type Response } from "express";
 import { createActionObserver } from "./action-observer.js";
 import type { AgentBackend } from "./agent-backend.js";
 import { createAdminAuth } from "./auth.js";
@@ -25,6 +25,7 @@ import { createSituationToolsExtension } from "./builtin-extensions/situation-to
 import { createTaskToolsExtension } from "./builtin-extensions/task-tools-extension.js";
 import { ClaudeCodeRuntime } from "./claude-code-runtime.js";
 import { loadConfig } from "./config.js";
+import { CspCustomerChannel } from "./csp-customer-channel.js";
 import { createCspRenewalSource } from "./csp-renewal-source.js";
 import { createCspTaskSource } from "./csp-task-source.js";
 import { computeDigestCounts, digestHeadline } from "./digest.js";
@@ -94,9 +95,25 @@ export async function createApp(): Promise<AppHandles> {
 		);
 	}
 
-	// Customer channel — stub by default. Real channels (email, SMS) drop in
-	// as extensions later by implementing CustomerChannel.
-	const customerChannel: CustomerChannel = new StubCustomerChannel();
+	// Customer channel — CSP-backed when CSP is configured: dispatched sends
+	// land in CSP as activities + notes (the system of record), not a log line.
+	// Stub otherwise (dev/tests). Other channels (email, SMS) drop in later by
+	// implementing CustomerChannel.
+	let customerChannel: CustomerChannel;
+	// CSP_MOCK runs (offline fixtures) must never fire real customer-facing
+	// writes — the mock transport only covers the csp-connector tools, not this
+	// channel, so mock mode falls back to the stub.
+	if (process.env.CSP_TOKEN && process.env.CSP_MOCK !== "1") {
+		customerChannel = new CspCustomerChannel({
+			baseUrl: process.env.CSP_BASE_URL ?? "http://localhost:5656",
+			token: process.env.CSP_TOKEN,
+			timeoutMs: process.env.CSP_TIMEOUT_MS ? Number(process.env.CSP_TIMEOUT_MS) : undefined,
+		});
+		console.log("[customer-channel] CSP-backed channel active (sends write to CSP)");
+	} else {
+		customerChannel = new StubCustomerChannel();
+		console.log("[customer-channel] STUB channel active — sends only log (set CSP_TOKEN for real)");
+	}
 
 	// Extension host — collects tools, channels, and event handlers
 	const host = new ExtensionHost({
@@ -270,9 +287,18 @@ export async function createApp(): Promise<AppHandles> {
 	console.log("[runtime] Using claude-code");
 
 	// Now the agent exists — bind the default LLM critic (deferred closure above).
+	// VERIFIER_MODEL runs the critic on its own (cheaper/faster) model via a
+	// second runtime instance; unset = the critic shares the main agent.
 	if (verifyEnabled) {
-		verifier = createLlmCriticVerifier(agent);
-		console.log(`[verify] Critic enabled for bands: ${verifyBands.join(", ")}`);
+		const verifierAgent: AgentBackend = config.verifierModel
+			? new ClaudeCodeRuntime(config.verifierModel, host.getTools(), config.claudeBinary, mcpUrl)
+			: agent;
+		verifier = createLlmCriticVerifier(verifierAgent);
+		console.log(
+			`[verify] Critic enabled for bands: ${verifyBands.join(", ")}${
+				config.verifierModel ? ` (model: ${config.verifierModel})` : ""
+			}`,
+		);
 	} else {
 		console.log("[verify] Verification disabled (VERIFY_ENABLED=false).");
 	}
@@ -296,6 +322,7 @@ export async function createApp(): Promise<AppHandles> {
 						: undefined,
 					store,
 					situationStore,
+					ledger,
 				})
 			: undefined;
 
@@ -313,6 +340,12 @@ export async function createApp(): Promise<AppHandles> {
 		config.triageMax,
 		config.triageMinScore,
 		config.brainLoopRunOnStart,
+		{
+			enabled: config.skipGateEnabled,
+			renewalHorizonDays: config.skipGateRenewalHorizonDays,
+			maxSkipAgeDays: config.skipGateMaxAgeDays,
+		},
+		config.brainConcurrency,
 	);
 
 	// Dispatcher — picks up due notify-then-act sends and pushes them through
@@ -379,45 +412,71 @@ export async function createApp(): Promise<AppHandles> {
 		res.json(entries);
 	});
 
-	app.post("/api/ledger/:id/cancel", async (req, res) => {
-		const existing = await ledger.get(req.params.id);
-		if (!existing) {
-			res.status(404).json({ error: "Not found" });
-			return;
-		}
-		if (existing.band !== "notify-then-act" && existing.band !== "escalate") {
-			res.status(400).json({ error: "Only notify-then-act and escalate can be cancelled" });
-			return;
-		}
-		if (existing.status !== "in-flight" && existing.status !== "needs-csm") {
-			res.status(400).json({ error: `Cannot cancel — already ${existing.status}` });
-			return;
-		}
-		const updated = await ledger.update(req.params.id, {
-			status: "cancelled",
-			note: (req.body?.reason as string) ?? "cancelled via admin API",
-			executedAt: new Date(),
-		});
-		res.json(updated);
+	// Console approval surfaces — the in-product human valve (no Lark needed):
+	// pending sends the CSM can still cancel, and escalations awaiting a decision.
+	app.get("/api/actions/pending", async (_req, res) => {
+		const entries = await ledger.listOpen();
+		res.json(entries.filter((e) => e.band === "notify-then-act" && e.status === "in-flight"));
 	});
 
-	app.post("/api/ledger/:id/resolve", async (req, res) => {
-		const existing = await ledger.get(req.params.id);
-		if (!existing) {
-			res.status(404).json({ error: "Not found" });
-			return;
-		}
-		if (existing.band !== "escalate") {
-			res.status(400).json({ error: "Only escalations can be resolved" });
-			return;
-		}
-		const updated = await ledger.update(req.params.id, {
-			status: "resolved",
-			note: (req.body?.outcome as string) ?? "resolved via admin API",
-			executedAt: new Date(),
-		});
-		res.json(updated);
+	app.get("/api/actions/escalations", async (_req, res) => {
+		const entries = await ledger.listOpen();
+		res.json(entries.filter((e) => e.band === "escalate" && e.status === "needs-csm"));
 	});
+
+	// One implementation of each ledger state transition, shared by both route
+	// pairs (/api/actions/* for the console, /api/ledger/* legacy admin) so the
+	// validation rules cannot drift between surfaces.
+	const cancelHandler =
+		(defaultNote: string) => async (req: Request<{ id: string }>, res: Response) => {
+			const existing = await ledger.get(req.params.id);
+			if (!existing) {
+				res.status(404).json({ error: "Not found" });
+				return;
+			}
+			if (existing.band !== "notify-then-act" && existing.band !== "escalate") {
+				res.status(400).json({ error: "Only notify-then-act and escalate can be cancelled" });
+				return;
+			}
+			if (existing.status !== "in-flight" && existing.status !== "needs-csm") {
+				res.status(400).json({ error: `Cannot cancel — already ${existing.status}` });
+				return;
+			}
+			const updated = await ledger.update(req.params.id, {
+				status: "cancelled",
+				note: (req.body?.reason as string) ?? defaultNote,
+				executedAt: new Date(),
+			});
+			res.json(updated);
+		};
+
+	const resolveHandler =
+		(defaultNote: string) => async (req: Request<{ id: string }>, res: Response) => {
+			const existing = await ledger.get(req.params.id);
+			if (!existing) {
+				res.status(404).json({ error: "Not found" });
+				return;
+			}
+			if (existing.band !== "escalate") {
+				res.status(400).json({ error: "Only escalations can be resolved" });
+				return;
+			}
+			if (existing.status !== "needs-csm") {
+				res.status(400).json({ error: `Cannot resolve — already ${existing.status}` });
+				return;
+			}
+			const updated = await ledger.update(req.params.id, {
+				status: "resolved",
+				note: (req.body?.outcome as string) ?? defaultNote,
+				executedAt: new Date(),
+			});
+			res.json(updated);
+		};
+
+	app.post("/api/actions/:id/cancel", cancelHandler("cancelled via console"));
+	app.post("/api/actions/:id/resolve", resolveHandler("resolved via console"));
+	app.post("/api/ledger/:id/cancel", cancelHandler("cancelled via admin API"));
+	app.post("/api/ledger/:id/resolve", resolveHandler("resolved via admin API"));
 
 	// "Yesterday: 47 acts, 12 notifies in-flight, 3 situations need you."
 	app.get("/api/digest/counters", async (req, res) => {

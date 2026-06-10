@@ -41,67 +41,78 @@ export interface CerebroMcpServerOptions {
  * handler suitable to mount on an Express route.
  */
 export function createMcpHandler(opts: CerebroMcpServerOptions) {
-	const server = new Server(
-		{ name: opts.name ?? "cerebro-claw", version: opts.version ?? "0.1.0" },
-		{ capabilities: { tools: {} } },
-	);
+	// One Server per request: a Server instance can hold only ONE transport, so
+	// sharing it across requests breaks as soon as two agent turns run
+	// concurrently ("Already connected to a transport"). Construction is cheap;
+	// the tool list is resolved dynamically through opts.tools() either way.
+	function makeServer(): Server {
+		const server = new Server(
+			{ name: opts.name ?? "cerebro-claw", version: opts.version ?? "0.1.0" },
+			{ capabilities: { tools: {} } },
+		);
 
-	server.setRequestHandler(ListToolsRequestSchema, async () => ({
-		tools: opts.tools().map((t) => ({
-			name: t.name,
-			description: t.description,
-			// Our ToolDefinition.parameters is already JSON Schema (type:"object",
-			// properties, required). MCP accepts it verbatim.
-			inputSchema: t.parameters,
-		})),
-	}));
+		server.setRequestHandler(ListToolsRequestSchema, async () => ({
+			tools: opts.tools().map((t) => ({
+				name: t.name,
+				description: t.description,
+				// Our ToolDefinition.parameters is already JSON Schema (type:"object",
+				// properties, required). MCP accepts it verbatim.
+				inputSchema: t.parameters,
+			})),
+		}));
 
-	server.setRequestHandler(CallToolRequestSchema, async (req) => {
-		const tool = opts.tools().find((t) => t.name === req.params.name);
-		if (!tool) {
-			return {
-				content: [{ type: "text", text: `Unknown tool: ${req.params.name}` }],
-				isError: true,
-			};
-		}
-		try {
-			const args = (req.params.arguments ?? {}) as Record<string, unknown>;
-			const result = await tool.execute(args);
-			if (opts.onToolCall) {
-				try {
-					await opts.onToolCall(req.params.name, args, result);
-				} catch (err) {
-					console.error("[mcp] onToolCall observer failed:", err);
-				}
+		server.setRequestHandler(CallToolRequestSchema, async (req) => {
+			const tool = opts.tools().find((t) => t.name === req.params.name);
+			if (!tool) {
+				return {
+					content: [{ type: "text", text: `Unknown tool: ${req.params.name}` }],
+					isError: true,
+				};
 			}
-			return {
-				content: [{ type: "text", text: result.content }],
-				isError: !result.success,
-			};
-		} catch (err) {
-			return {
-				content: [
-					{
-						type: "text",
-						text: `Tool ${req.params.name} threw: ${
-							err instanceof Error ? err.message : String(err)
-						}`,
-					},
-				],
-				isError: true,
-			};
-		}
-	});
+			try {
+				const args = (req.params.arguments ?? {}) as Record<string, unknown>;
+				const result = await tool.execute(args);
+				if (opts.onToolCall) {
+					try {
+						await opts.onToolCall(req.params.name, args, result);
+					} catch (err) {
+						console.error("[mcp] onToolCall observer failed:", err);
+					}
+				}
+				return {
+					content: [{ type: "text", text: result.content }],
+					isError: !result.success,
+				};
+			} catch (err) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Tool ${req.params.name} threw: ${
+								err instanceof Error ? err.message : String(err)
+							}`,
+						},
+					],
+					isError: true,
+				};
+			}
+		});
 
-	// Stateless: every request creates a fresh transport, runs once, closes.
-	// This matches Claude Code's behavior (it opens a fresh MCP connection per turn).
+		return server;
+	}
+
+	// Stateless: every request creates a fresh server + transport pair, runs
+	// once, closes. This matches Claude Code's behavior (fresh MCP connection
+	// per turn) and is safe under concurrent agent turns.
 	return async (req: Request, res: Response) => {
+		const server = makeServer();
 		const transport = new StreamableHTTPServerTransport({
 			sessionIdGenerator: undefined, // stateless
 			enableJsonResponse: true,
 		});
 		res.on("close", () => {
 			transport.close().catch(() => undefined);
+			server.close().catch(() => undefined);
 		});
 		try {
 			await server.connect(transport);

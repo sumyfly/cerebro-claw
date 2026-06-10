@@ -175,3 +175,6 @@ See `.env.example` for the full list. The important ones:
 | `DISPATCHER_INTERVAL_MS` | How often the notify-then-act dispatcher polls (default 60s) |
 | `DEFAULT_PAUSE_MINUTES` | Default pause window for `notify_then_send_to_customer` (default 240 = 4h) |
 | `BRAIN_LOOP_RUN_ON_START` | Run a cycle immediately on boot (default `false` — avoids a token tax on every dev restart) |
+| `BRAIN_CONCURRENCY` | Max concurrent agent turns within a sweep (default 3; 1 = serial) |
+| `VERIFIER_MODEL` | Run the critic verifier on its own cheaper/faster model (unset = share the main agent) |
+| `SKIP_GATE`, `SKIP_GATE_RENEWAL_HORIZON_DAYS`, `SKIP_GATE_MAX_AGE_DAYS` | Change-detection gate: unchanged accounts skip their agent turn (`off` disables; defaults 90d horizon, 7d max skip age) |

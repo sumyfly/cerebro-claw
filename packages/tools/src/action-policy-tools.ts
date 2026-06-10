@@ -30,6 +30,28 @@ function situationLink(params: Record<string, unknown>): {
 	};
 }
 
+/** Kinds of real effects an Act can point at. */
+const EVIDENCE_KINDS = ["note", "activity", "renewal", "other"] as const;
+
+export interface ActEvidence {
+	kind: (typeof EVIDENCE_KINDS)[number];
+	id: string;
+}
+
+/**
+ * Parse the `evidence` param into a validated reference, or null. An Act must
+ * point at a real effect (the CSP note id, activity id, renewal id, or another
+ * verifiable artifact id) — the ledger records deeds, not narration.
+ */
+function parseEvidence(value: unknown): ActEvidence | null {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+	const e = value as Record<string, unknown>;
+	const kind = String(e.kind ?? "");
+	const id = String(e.id ?? "").trim();
+	if (!EVIDENCE_KINDS.includes(kind as ActEvidence["kind"]) || !id) return null;
+	return { kind: kind as ActEvidence["kind"], id };
+}
+
 /**
  * Context the action-policy tools need.
  *
@@ -165,7 +187,7 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 	const act: ToolDefinition = {
 		name: "act",
 		description:
-			"Record an autonomous action the agent has already taken (Act band): an internal note logged, an instinct captured, a detection performed, an internal ping sent. Use this whenever you do something reversible, low-stakes, and fact-based without needing CSM approval. Increments the daily Act counter in the digest.",
+			"Record an autonomous action the agent has already taken (Act band), citing evidence of the real effect (the artifact id). NOTE: CSP writes (csp_create_note, csp_update_renewal) are recorded in the ledger AUTOMATICALLY — do NOT also call act for those. Use act only for other verifiable work (e.g. an instinct captured via memory_instinct — cite its id). Reversible, low-stakes, fact-based work only. Increments the daily Act counter in the digest.",
 		parameters: {
 			type: "object",
 			properties: {
@@ -179,13 +201,42 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 					type: "string",
 					description: "Why this action was warranted (signal + judgment)",
 				},
+				evidence: {
+					type: "object",
+					description:
+						'Reference to the real effect behind this act: {kind: "note"|"activity"|"renewal"|"other", id: "<object id>"} — e.g. the CSP note id returned by csp_create_note, the renewal UUID you updated, or the instinct/memory id you wrote.',
+				},
 				...SITUATION_LINK_PROPS,
 			},
-			required: ["customer_id", "summary", "reason"],
+			required: ["customer_id", "summary", "reason", "evidence"],
 		},
 		async execute(params) {
 			const blocked = await overrideBlock(params.customer_id as string, "act");
 			if (blocked) return blocked;
+			const evidence = parseEvidence(params.evidence);
+			if (!evidence) {
+				return {
+					content:
+						"Act refused: no evidence of a real effect. Do the actual work first (e.g. memory_instinct — it returns the instinct id), then call act with evidence {kind, id} referencing what you created. CSP notes and renewal updates are recorded automatically — don't call act for those at all. If there is nothing to point at, this is not an Act — say no action is needed, or use prep/escalate.",
+					success: false,
+					details: { blockedBy: "missing-evidence" },
+				};
+			}
+			// Dedup by evidence: if a ledger entry already cites this artifact
+			// (e.g. the observer auto-recorded the CSP write), don't add a second —
+			// one deed must count once in the digest, regardless of call order.
+			const recent = await ctx.ledger.listRecentByCustomer(params.customer_id as string, 20);
+			const already = recent.find(
+				(e) =>
+					(e.payload as { evidence?: { id?: string } } | undefined)?.evidence?.id === evidence.id,
+			);
+			if (already) {
+				return {
+					content: `Already recorded (#${already.id.slice(0, 8)}): an entry citing evidence ${evidence.id} exists — not double-counting. Nothing more to do.`,
+					success: true,
+					details: { actionId: already.id, deduped: true },
+				};
+			}
 			const ts = now();
 			const entry = await ctx.ledger.record({
 				band: "act",
@@ -196,6 +247,7 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 				status: "done",
 				createdAt: ts,
 				executedAt: ts,
+				payload: { evidence },
 				...situationLink(params),
 			});
 			return {
@@ -246,6 +298,24 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 			const blocked = await overrideBlock(params.customer_id as string, "notify-then-act");
 			if (blocked) return blocked;
 			const customerName = (params.customer_name as string) ?? (params.customer_id as string);
+			// Dedup gate — one in-flight customer touch per customer.
+			const findOpenNotify = async () => {
+				const openEntries = await ctx.ledger.listOpen();
+				return openEntries.find(
+					(e) =>
+						e.band === "notify-then-act" &&
+						e.status === "in-flight" &&
+						e.customerId === (params.customer_id as string),
+				);
+			};
+			const dedupRefusal = (dup: ActionLedgerEntry) => ({
+				content: `Notify refused: ${customerName} already has an in-flight send (#${dup.id.slice(0, 8)}${dup.executeAt ? `, dispatches ${dup.executeAt.toISOString()}` : ""}): "${dup.summary}". If this new touch supersedes it, cancel first with cancel_pending_action ${dup.id} — otherwise let the pending send run.`,
+				success: false,
+				details: { blockedBy: "dedup", openActionId: dup.id },
+			});
+			// First check before the critic so a duplicate never costs a verifier turn.
+			const dup = await findOpenNotify();
+			if (dup) return dedupRefusal(dup);
 			// Critic gate — verify the send follows from its justification before scheduling.
 			const refused = await verifyGate(
 				"notify-then-act",
@@ -254,6 +324,12 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 				params.reason as string,
 			);
 			if (refused) return refused;
+			// Re-check AFTER the critic: the verify turn takes seconds, and a
+			// concurrent agent turn for the same customer (parallel sweep subjects)
+			// may have recorded a send in that window. The re-check → record path
+			// has no further awaits between them, so it cannot interleave.
+			const lateDup = await findOpenNotify();
+			if (lateDup) return dedupRefusal(lateDup);
 			const rawPause = params.pause_minutes as number | undefined;
 			const pauseMin = Math.min(
 				1440,

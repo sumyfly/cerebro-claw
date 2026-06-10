@@ -72,4 +72,11 @@ export class InMemoryActionLedger implements ActionLedger {
 			.filter((e) => e.situationId === situationId)
 			.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
 	}
+
+	async listRecentByCustomer(customerId: string, limit: number): Promise<ActionLedgerEntry[]> {
+		return Array.from(this.entries.values())
+			.filter((e) => e.customerId === customerId)
+			.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+			.slice(0, Math.max(0, limit));
+	}
 }

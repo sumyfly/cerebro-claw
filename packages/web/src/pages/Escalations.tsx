@@ -1,5 +1,5 @@
 /** Escalations — decisions awaiting the human (escalate band, needs-csm status).
- * Reads GET /api/ledger/open. Resolve via POST /api/ledger/:id/resolve {outcome}. */
+ * Reads GET /api/actions/escalations. Resolve via POST /api/actions/:id/resolve {outcome}. */
 
 import { CheckCircleOutlined, SafetyCertificateOutlined } from "@ant-design/icons";
 import { Button, Input, Modal, message } from "antd";
@@ -28,17 +28,14 @@ export function Escalations() {
 	const [outcome, setOutcome] = useState("");
 	const [saving, setSaving] = useState(false);
 
-	const { data, loaded, refresh } = usePoll<LedgerEntry[]>("/api/ledger/open", 5000);
-	const items = useMemo(
-		() => (data ?? []).filter((e) => e.band === "escalate" && e.status === "needs-csm"),
-		[data],
-	);
+	const { data, loaded, refresh } = usePoll<LedgerEntry[]>("/api/actions/escalations", 5000);
+	const items = useMemo(() => data ?? [], [data]);
 
 	async function resolve() {
 		if (!active) return;
 		setSaving(true);
 		try {
-			await postJson(`/api/ledger/${active.id}/resolve`, {
+			await postJson(`/api/actions/${active.id}/resolve`, {
 				outcome: outcome.trim() || "resolved via console",
 			});
 			message.success(`Escalation #${shortId(active.id)} resolved`);

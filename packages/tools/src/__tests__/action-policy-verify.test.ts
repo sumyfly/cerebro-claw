@@ -80,6 +80,7 @@ describe("action-policy verifier gate", () => {
 			customer_id: "b1",
 			summary: "logged a note",
 			reason: "ok",
+			evidence: { kind: "note", id: "note-1" },
 		});
 		expect(act.success).toBe(true);
 		expect(verify).not.toHaveBeenCalled();
@@ -123,6 +124,46 @@ describe("action-policy verifier gate", () => {
 		expect(res.success).toBe(false);
 		expect(res.details?.blockedBy).toBe("override");
 		expect(verify).not.toHaveBeenCalled(); // override short-circuits before verify
+	});
+
+	it("re-checks dedup AFTER the critic — a competing notify recorded during the verify window is caught", async () => {
+		const ledger = new InMemoryActionLedger();
+		// Critic that simulates a concurrent agent turn winning the race: while
+		// this call is inside the (slow) verify gate, the other turn records its
+		// in-flight notify for the same customer — then the critic passes.
+		const verify = vi.fn(async () => {
+			await ledger.record({
+				band: "notify-then-act",
+				customerId: "b1",
+				summary: "Send to Acme: competing touch",
+				reason: "raced in during verify",
+				status: "in-flight",
+				createdAt: NOW,
+				executeAt: new Date(NOW.getTime() + 3_600_000),
+				payload: { recipient: "a@b.com", text: "competitor" },
+			});
+			return { pass: true, reason: "ok" };
+		});
+		const sendToCsm = vi.fn().mockResolvedValue(undefined);
+		const tools = new Map(
+			createActionPolicyTools({
+				ledger,
+				customerChannel: new StubCustomerChannel(),
+				sendToCsm,
+				now: () => NOW,
+				verify: verify as never,
+			}).map((t) => [t.name, t] as [string, ToolDefinition]),
+		);
+		const res = await tools.get("notify_then_send_to_customer")!.execute({
+			customer_id: "b1",
+			recipient: "a@b.com",
+			text: "hi",
+			reason: "renewal 30d out",
+		});
+		expect(res.success).toBe(false);
+		expect(res.details?.blockedBy).toBe("dedup");
+		expect(sendToCsm).not.toHaveBeenCalled(); // loser never schedules
+		expect(await ledger.listOpen()).toHaveLength(1); // only the winner's send
 	});
 
 	it("with no verifier, everything proceeds (disabled path)", async () => {

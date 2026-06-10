@@ -12,6 +12,10 @@ export interface TriageInput {
 	healthGrade?: string;
 	/** Usage trend. */
 	usageTrend?: "up" | "flat" | "down";
+	/** Health trend vs the last cycle's score (the health DELTA signal). */
+	healthTrend?: "up" | "flat" | "down";
+	/** A stored override forcing a band — the CSM explicitly wants eyes here. */
+	overrideForcesBand?: string;
 	/** Annual contract value / ARR. */
 	contractValue?: number;
 	/** Days until renewal (negative = overdue). */
@@ -62,7 +66,11 @@ export function computeTriageScore(
 		risk = Math.max(risk, (100 - clamp(input.healthScore, 0, 100)) / 100);
 	if (input.healthGrade && /risk|churn|red/i.test(input.healthGrade)) risk = Math.max(risk, 0.7);
 	if (input.usageTrend === "down") risk = Math.max(risk, 0.6);
+	if (input.healthTrend === "down") risk = Math.max(risk, 0.65);
 	if (input.atRisk) risk = Math.max(risk, 0.8);
+	if (input.overrideForcesBand && /escalate|notify/i.test(input.overrideForcesBand)) {
+		risk = Math.max(risk, 0.5);
+	}
 	risk = clamp(risk);
 
 	const value = input.contractValue != null ? clamp(input.contractValue / w.valueNorm) : 0;

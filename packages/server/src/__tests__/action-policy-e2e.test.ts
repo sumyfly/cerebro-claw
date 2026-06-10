@@ -46,6 +46,7 @@ describe("Action policy end-to-end", () => {
 			customer_name: "Acme",
 			summary: "Logged usage-drop note",
 			reason: "Engagement down 35% vs last week",
+			evidence: { kind: "note", id: "note-e2e-1" },
 		});
 
 		// 2. The agent queues a notify-then-act.
