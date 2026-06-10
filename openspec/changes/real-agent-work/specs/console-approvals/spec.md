@@ -2,19 +2,14 @@
 
 ## ADDED Requirements
 
-### Requirement: Pending sends visible and cancellable in the console
+### Requirement: Pending sends listable and cancellable via the API
 
-The web console SHALL list all in-flight notify-then-act entries with customer, message preview, reason, and time remaining until dispatch, and SHALL offer a one-click cancel that transitions the entry to `cancelled` through the same path as `cancel_pending_action`.
+The system SHALL expose in-flight notify-then-act entries (`GET /api/actions/pending`) and a cancel transition (`POST /api/actions/:id/cancel`) that moves an entry to `cancelled` through the same validation as `cancel_pending_action`. (A dedicated Pending page was built and then removed by product decision — in-flight sends remain visible read-only on the Activity board; cancellation is API-only.)
 
-#### Scenario: CSM cancels a pending send
+#### Scenario: CSM cancels a pending send via the API
 
-- **WHEN** the CSM clicks cancel on a pending send before its `executeAt`
+- **WHEN** a cancel is posted for a pending send before its `executeAt`
 - **THEN** the entry becomes `cancelled` and the dispatcher never sends it
-
-#### Scenario: Pending list shows countdown
-
-- **WHEN** the pending view is open
-- **THEN** each entry shows when it will dispatch and who it will reach
 
 ### Requirement: Escalations visible and resolvable in the console
 

@@ -27,7 +27,7 @@
 ## 5. Console approvals
 
 - [x] 5.1 Add/verify API endpoints: `GET /api/actions/pending`, `GET /api/actions/escalations`, `POST /api/actions/:id/cancel`, `POST /api/actions/:id/resolve` with the same state validation as the tools and `ADMIN_TOKEN` auth; tests
-- [x] 5.2 Web: Pending-sends view (customer, preview, reason, dispatch countdown, cancel button) in `packages/web`
+- [x] 5.2 Web: Pending-sends view (customer, preview, reason, dispatch countdown, cancel button) in `packages/web` — built, then REMOVED by product decision; pending list + cancel remain API-only (`/api/actions/pending`, `/api/actions/:id/cancel`), in-flight sends visible read-only on the Activity board
 - [x] 5.3 Web: Escalations view (situation, options, recommendation, resolve form) and remove resolved items from the needs-csm count (already existed; now reads the dedicated `/api/actions/*` endpoints)
 - [x] 5.4 Verify both views against a running server per `docs/ui-verification.md` (endpoints they poll verified live on a running server: pending list/cancel and escalation list/resolve exercised end-to-end; pages compile in the web build — no manual browser click-through performed)
 

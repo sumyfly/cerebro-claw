@@ -3,7 +3,6 @@
 import {
 	ApiOutlined,
 	EyeOutlined,
-	FieldTimeOutlined,
 	NodeIndexOutlined,
 	SettingOutlined,
 	SolutionOutlined,
@@ -25,7 +24,6 @@ interface NavItem {
 const NAV: NavItem[] = [
 	{ path: "/", label: "Activity", icon: <NodeIndexOutlined /> },
 	{ path: "/situation", label: "Situation", icon: <EyeOutlined /> },
-	{ path: "/pending", label: "Pending", icon: <FieldTimeOutlined /> },
 	{ path: "/escalation", label: "Escalation", icon: <SolutionOutlined /> },
 	{ path: "/skills", label: "Intel", icon: <ApiOutlined /> },
 	{ path: "/settings", label: "Config", icon: <SettingOutlined /> },
@@ -54,7 +52,6 @@ export function AppLayout() {
 		lastSuccessAt !== null && Date.now() - new Date(lastSuccessAt).getTime() < COUNTERS_POLL_MS * 2;
 
 	const escalationCount = counters?.counts?.escalations?.needsCsm ?? 0;
-	const pendingCount = counters?.counts?.notifies?.inFlight ?? 0;
 
 	return (
 		<div className="cc-root" style={{ display: "flex", minHeight: "100vh" }}>
@@ -62,12 +59,7 @@ export function AppLayout() {
 				{NAV.map((item) => {
 					const active =
 						item.path === "/" ? location.pathname === "/" : location.pathname.startsWith(item.path);
-					const badge =
-						item.path === "/escalation" && escalationCount > 0
-							? escalationCount
-							: item.path === "/pending" && pendingCount > 0
-								? pendingCount
-								: 0;
+					const showBadge = item.path === "/escalation" && escalationCount > 0;
 					return (
 						<button
 							type="button"
@@ -75,7 +67,7 @@ export function AppLayout() {
 							className={`cc-rail-item${active ? " active" : ""}`}
 							onClick={() => navigate(item.path)}
 						>
-							{badge > 0 && <span className="cc-rail-badge ring">{badge}</span>}
+							{showBadge && <span className="cc-rail-badge ring">{escalationCount}</span>}
 							{item.icon}
 							<span className="cc-rail-label">{item.label}</span>
 						</button>
