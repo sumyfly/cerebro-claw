@@ -18,6 +18,8 @@ export type {
 	ToolParameters,
 	ToolParameterProperty,
 	ToolResult,
+	ToolKind,
+	ToolBlastRadius,
 } from "./tool.js";
 
 export type {
@@ -70,3 +72,12 @@ export {
 export type { RenewalRecord, RenewalSource } from "./renewal.js";
 
 export type { VerificationInput, VerificationResult, Verifier } from "./verifier.js";
+
+export type {
+	LegalityResult,
+	CapabilityScope,
+	CapabilityGrant,
+	TurnContext,
+	CapabilityStore,
+} from "./harness.js";
+export { checkLegality, validateToolDefinition } from "./harness.js";

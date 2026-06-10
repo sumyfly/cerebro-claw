@@ -658,14 +658,20 @@ export class BrainLoop {
 		return { summary: { evaluated: worked.length, available: open.length }, actions };
 	}
 
-	/** Task ids that already have an open (in-flight / needs-csm) ledger action. */
+	/**
+	 * Task ids that already have an open (in-flight / claimed / needs-csm)
+	 * ledger action. The harness now stamps task_id on the row itself; legacy
+	 * rows only carry payload.taskId. Read both so a half-migrated DB still
+	 * dedups correctly.
+	 */
 	private async tasksWithOpenActions(): Promise<Set<string>> {
 		const ids = new Set<string>();
 		if (!this.ledger) return ids;
 		try {
 			for (const entry of await this.ledger.listOpen()) {
-				const taskId = (entry.payload as { taskId?: unknown } | undefined)?.taskId;
-				if (typeof taskId === "string") ids.add(taskId);
+				if (entry.taskId) ids.add(entry.taskId);
+				const legacy = (entry.payload as { taskId?: unknown } | undefined)?.taskId;
+				if (typeof legacy === "string") ids.add(legacy);
 			}
 		} catch (err) {
 			console.error(`[work-loop] Ledger dedup scan failed: ${(err as Error).message}`);
@@ -686,7 +692,9 @@ ${context}
 ${TASK_GUIDANCE}`;
 
 		try {
-			const response = await this.agent.prompt(prompt, undefined, `brain:task:${task.id}`);
+			const response = await this.agent.prompt(prompt, undefined, `brain:task:${task.id}`, {
+				subject: { kind: "task", taskId: task.id, accountId: full?.businessId ?? undefined },
+			});
 			if (response.toolCalls.length > 0) {
 				console.log(`[work-loop] task ${task.id}: ${response.toolCalls.length} actions taken`);
 			}
@@ -758,7 +766,9 @@ ${situationBlock}
 ${RENEWAL_GUIDANCE}`;
 
 		try {
-			const response = await this.agent.prompt(prompt, undefined, `brain:renewal:${id}`);
+			const response = await this.agent.prompt(prompt, undefined, `brain:renewal:${id}`, {
+				subject: { kind: "renewal", renewalId: id, accountId: full.businessId },
+			});
 			if (response.toolCalls.length > 0) {
 				console.log(`[work-loop] renewal ${id}: ${response.toolCalls.length} actions taken`);
 			}
@@ -782,7 +792,9 @@ ${BAND_GUIDANCE}
 If nothing needs doing, say "No action needed for ${companyName}." and move on.`;
 
 		try {
-			const response = await this.agent.prompt(prompt, undefined, `brain:${customerId}`);
+			const response = await this.agent.prompt(prompt, undefined, `brain:${customerId}`, {
+				subject: { kind: "account", accountId: customerId },
+			});
 			if (response.toolCalls.length > 0) {
 				console.log(`[work-loop] ${companyName}: ${response.toolCalls.length} actions taken`);
 			}

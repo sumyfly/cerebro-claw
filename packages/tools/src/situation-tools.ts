@@ -37,6 +37,8 @@ export function createSituationTools(ctx: SituationToolsContext): ToolDefinition
 
 	const open: ToolDefinition = {
 		name: "situation_open",
+		kind: "act",
+		blastRadius: "internal",
 		description:
 			"Open (or fetch the existing) Situation — a persistent storyline for an account or renewal. Use this INSTEAD of logging an `act` when you are noticing-and-watching with no work performed. Idempotent: returns the existing open Situation for the same account/kind (and renewalId for renewal-risk) rather than creating a duplicate, so you never re-discover the same risk. Set status to 'watching' and a checkpoint when you want to revisit later.",
 		parameters: {
@@ -90,6 +92,8 @@ export function createSituationTools(ctx: SituationToolsContext): ToolDefinition
 
 	const advance: ToolDefinition = {
 		name: "situation_advance",
+		kind: "act",
+		blastRadius: "internal",
 		description:
 			"Advance an existing Situation: change status (open/watching/escalated), update what you're waiting on, set the next checkpoint, or flag it for the CSM. Use this each time the storyline moves.",
 		parameters: {
@@ -128,6 +132,8 @@ export function createSituationTools(ctx: SituationToolsContext): ToolDefinition
 
 	const resolve: ToolDefinition = {
 		name: "situation_resolve",
+		kind: "act",
+		blastRadius: "internal",
 		description:
 			"Resolve a Situation when the condition no longer holds (recovered / renewed / churned / decided). It drops out of the agent's working set so it is never re-surfaced.",
 		parameters: {
@@ -156,6 +162,8 @@ export function createSituationTools(ctx: SituationToolsContext): ToolDefinition
 
 	const list: ToolDefinition = {
 		name: "situation_list",
+		kind: "observe",
+		blastRadius: "none",
 		description:
 			"List the open Situations for an account so you can see what is already in flight before acting. (The work loop also injects these into your context.)",
 		parameters: {

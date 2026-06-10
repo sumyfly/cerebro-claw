@@ -41,6 +41,12 @@ export function createBashTool(options: BashToolOptions): ToolDefinition {
 
 	return {
 		name: "bash",
+		// Bash is allowlisted to read-only inspection commands (curl/cat/ls/grep…).
+		// In that posture it's an observe tool — no write side effects reach beyond
+		// transient stdout. If the allowlist ever opens up to mutating commands,
+		// the kind/blastRadius declared here must change with it.
+		kind: "observe",
+		blastRadius: "none",
 		description: `Run a shell command. Only allowlisted commands are permitted: ${[...allowlist].join(", ")}. Output is truncated at ${maxBytes} bytes. Timeout: ${timeoutMs}ms. Use this to query external APIs (via curl), read local files, or run any data-fetching script the operator has installed.`,
 		parameters: {
 			type: "object",

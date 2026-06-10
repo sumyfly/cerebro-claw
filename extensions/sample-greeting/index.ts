@@ -25,6 +25,8 @@ const sampleExtension: Extension = {
 	factory: (api) => {
 		api.registerTool({
 			name: "greeting",
+			kind: "observe",
+			blastRadius: "none",
 			description:
 				"Return a friendly greeting for a person by name. Demo tool to verify extension registration.",
 			parameters: {
@@ -45,6 +47,8 @@ const sampleExtension: Extension = {
 
 		api.registerTool({
 			name: "service_status",
+			kind: "observe",
+			blastRadius: "none",
 			description:
 				"Check whether an external service is up. Returns HTTP status code from a HEAD request. Use this as an example of how an extension can wrap a real data source for the agent.",
 			parameters: {

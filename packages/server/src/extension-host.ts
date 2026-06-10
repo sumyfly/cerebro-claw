@@ -8,6 +8,7 @@ import {
 	type ExtensionEvent,
 	type MemoryStore,
 	type ToolDefinition,
+	validateToolDefinition,
 } from "@cerebro-claw/shared";
 
 export interface ExtensionHostContext {
@@ -35,9 +36,26 @@ export class ExtensionHost {
 
 	async load(extensions: Extension[]): Promise<void> {
 		for (const ext of extensions) {
+			const registerTool = (tool: ToolDefinition): void => {
+				const result = validateToolDefinition(tool);
+				if (!result.ok) {
+					// Hard failure — refuse to register a structurally illegal tool. This
+					// is the *only* place band/blast-radius are validated; once a tool is
+					// in the registry the harness trusts the declaration.
+					throw new Error(
+						`[extensions] Refusing to register tool "${tool.name}" from "${ext.id}": ${result.reason}`,
+					);
+				}
+				if (this.tools.some((t) => t.name === tool.name)) {
+					throw new Error(
+						`[extensions] Duplicate tool name "${tool.name}" registered by "${ext.id}"`,
+					);
+				}
+				this.tools.push(tool);
+			};
 			const api: ExtensionAPI = {
 				extensionId: ext.id,
-				registerTool: (tool) => this.tools.push(tool),
+				registerTool,
 				registerChannel: (channel) => this.channels.push(channel),
 				registerBand: (band) => {
 					if (!this.bands.some((b) => b.id === band.id)) this.bands.push(band);

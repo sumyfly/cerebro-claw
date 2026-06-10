@@ -100,6 +100,8 @@ const extension: Extension = {
 
 		api.registerTool({
 			name: "csp_list_my_accounts",
+			kind: "observe",
+			blastRadius: "none",
 			description:
 				"List the accounts assigned to a CSM in CSP. Returns paginated account summaries (id, name, plan, country, status, health score range). Use this to discover which accounts exist before drilling into details. If no csm_email is provided, the default from CSP_CSM_EMAIL is used.",
 			parameters: {
@@ -137,6 +139,8 @@ const extension: Extension = {
 
 		api.registerTool({
 			name: "csp_get_account",
+			kind: "observe",
+			blastRadius: "none",
 			description:
 				"Fetch a full account profile from CSP by business ID (24-char hex). Returns name, plan, country, industry, assignedCsmName/Email, status, createdAt, etc. Use this when you need detailed account info — it's the authoritative source.",
 			parameters: {
@@ -170,6 +174,8 @@ const extension: Extension = {
 
 		api.registerTool({
 			name: "csp_get_health_score",
+			kind: "observe",
+			blastRadius: "none",
 			description:
 				"Fetch the current health score for an account from CSP. Returns overallScore (0-100), grade, trend, calculatedAt, and the underlying details (drivers). Use this when judging whether an account needs attention.",
 			parameters: {
@@ -200,6 +206,8 @@ const extension: Extension = {
 
 		api.registerTool({
 			name: "csp_get_engagement",
+			kind: "observe",
+			blastRadius: "none",
 			description:
 				"Fetch the engagement signal for an account from CSP (logins, activity, recent events). Use this to gauge real product usage — it's the authoritative usage trend, much better than guessing.",
 			parameters: {
@@ -230,6 +238,8 @@ const extension: Extension = {
 
 		api.registerTool({
 			name: "csp_get_notes",
+			kind: "observe",
+			blastRadius: "none",
 			description:
 				"List notes for an account from CSP. Returns the most recent notes first by default. These are the CSM's real notes — calls, meetings, decisions, observations.",
 			parameters: {
@@ -275,6 +285,11 @@ const extension: Extension = {
 
 		api.registerTool({
 			name: "csp_create_note",
+			// A CSP note is a CSM-visible artifact (the CSM and team see it in CSP).
+			// Notes are reversible (delete works) and authored on the agent's behalf —
+			// so this is `act` + csm-only, not customer-reaching.
+			kind: "act",
+			blastRadius: "csm-only",
 			description:
 				"Create a note on a CSP account — this writes back to the platform so the CSM and team can see it. Use this when the CSM tells you to log something ('add a note that...'), when you finalize a brief worth keeping, or when you observe something that should be visible to the team. For private agent observations the CSM doesn't need to see logged, prefer memory_instinct instead.",
 			parameters: {
@@ -338,6 +353,8 @@ const extension: Extension = {
 
 		api.registerTool({
 			name: "csp_delete_note",
+			kind: "act",
+			blastRadius: "csm-only",
 			description:
 				"Delete a note in CSP by its id. Use this only when the CSM explicitly asks to remove a note, or to clean up notes the agent itself created during testing. Once deleted the note is gone — there is no undo.",
 			parameters: {
@@ -371,6 +388,8 @@ const extension: Extension = {
 
 		api.registerTool({
 			name: "csp_get_renewals",
+			kind: "observe",
+			blastRadius: "none",
 			description:
 				"List renewals for an account from CSP. Returns renewal records with date, status, owner, ARR. Use this to understand what renewals are coming up for a specific account.",
 			parameters: {
@@ -407,6 +426,8 @@ const extension: Extension = {
 
 		api.registerTool({
 			name: "csp_get_renewal",
+			kind: "observe",
+			blastRadius: "none",
 			description:
 				"Fetch a single renewal record by its ID (UUID). Returns full detail including status history, playbook progress, owner, ARR.",
 			parameters: {
@@ -440,6 +461,12 @@ const extension: Extension = {
 
 		api.registerTool({
 			name: "csp_update_renewal",
+			// A renewal update changes a customer-visible record (the CSM and customer
+			// can see status / stage shifts in CSP). CSP rejects irreversible commercial
+			// transitions for the agent's role; the tool guidance routes those to
+			// escalate. So in practice this is customer-reversible at the harness layer.
+			kind: "act",
+			blastRadius: "customer-reversible",
 			description:
 				"Advance a renewal in CSP (write-back): update its status and/or playbook stage. Use this to move a renewal forward as part of the action policy — pair it with the right band: a routine status note is an Act; a customer nudge goes through notify_then_send_to_customer; a discount/contract change is an Escalate (don't self-approve commercial terms). IMPORTANT: if CSP rejects the update (transition not permitted for your role), do NOT force it — fall back to csp_create_note to record the intent and/or escalate so the CSM can act. Report what you could and could not change.",
 			parameters: {

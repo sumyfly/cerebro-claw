@@ -53,6 +53,8 @@ export type ActionStatus =
 	| "done"
 	/** Notify-then-act — heads-up sent, pause window not yet elapsed. */
 	| "in-flight"
+	/** Notify-then-act — a dispatcher worker has claimed this row (CAS lease). */
+	| "claimed"
 	/** Notify-then-act — heads-up sent + send dispatched after pause window. */
 	| "executed"
 	/** CSM cancelled the action during the pause window. */
@@ -61,8 +63,10 @@ export type ActionStatus =
 	| "needs-csm"
 	/** Escalate — CSM has decided + the agent has been told the outcome. */
 	| "resolved"
-	/** Dispatcher tried to execute and failed. */
-	| "failed";
+	/** Dispatcher tried to execute and failed (will retry until max attempts). */
+	| "failed"
+	/** Dispatcher gave up after the retry budget; needs CSM attention. */
+	| "dead-letter";
 
 export interface ActionLedgerEntry {
 	id: string;
@@ -88,6 +92,41 @@ export interface ActionLedgerEntry {
 	situationId?: string;
 	/** Renewal this action concerns (UUID), when renewal-scoped — the CTA join. */
 	renewalId?: string;
+
+	// --- Harness-pipeline fields (v2) ----------------------------------------
+
+	/** Agent turn that produced this entry. NULL for legacy / system-injected rows. */
+	turnId?: string;
+	/** Task this entry concerns (CSP task id). Indexed for mid-flight dedup. */
+	taskId?: string;
+	/** Tool that produced this entry (e.g. "csp_create_note", "notify_then_send_to_customer"). */
+	toolName?: string;
+	/** Blast radius declared by the tool. Same vocabulary as ToolDefinition.blastRadius. */
+	blastRadius?: string;
+
+	/**
+	 * UNIQUE in storage for kind=notify rows. Two parallel turns that propose the
+	 * same customer-facing send hit a UNIQUE-key violation at the DB layer, so
+	 * dedup is enforced by the storage engine, not by the agent's discipline.
+	 */
+	idempotencyKey?: string;
+	/** Dispatcher lease — when a worker CAS-claimed this row. NULL until claimed. */
+	claimedAt?: Date;
+	/** Dispatcher lease holder identity (e.g. "dispatcher@host:pid"). */
+	claimedBy?: string;
+	/** Send attempts tried so far (success or failure). Used for the retry budget. */
+	attemptCount?: number;
+
+	/** Escalate-only: CSM's chosen resolution string (matches one of the `options`). */
+	resolution?: string;
+	resolvedAt?: Date;
+	/** Identifier of the CSM that resolved this escalation. */
+	resolvedBy?: string;
+
+	/** When the row is the consequence of a prior action, link back to it. */
+	parentId?: string;
+	/** Capability grant consumed to execute this row, if any. */
+	capabilityId?: string;
 }
 
 /**
@@ -95,7 +134,11 @@ export interface ActionLedgerEntry {
  * updates — never delete an entry, the digest depends on history.
  */
 export interface ActionLedger {
-	/** Record a new action. Returns the generated id. */
+	/**
+	 * Record a new action. Returns the generated id. May throw if a UNIQUE
+	 * constraint blocks the insert — currently, parallel attempts to create
+	 * the same notify (same idempotencyKey) collide and only one wins.
+	 */
 	record(
 		entry: Omit<ActionLedgerEntry, "id" | "createdAt"> & {
 			id?: string;
@@ -106,7 +149,22 @@ export interface ActionLedger {
 	/** Update a previously-recorded action (status change, executedAt, note). */
 	update(
 		id: string,
-		patch: Partial<Pick<ActionLedgerEntry, "status" | "executedAt" | "note" | "payload">>,
+		patch: Partial<
+			Pick<
+				ActionLedgerEntry,
+				| "status"
+				| "executeAt"
+				| "executedAt"
+				| "note"
+				| "payload"
+				| "claimedAt"
+				| "claimedBy"
+				| "attemptCount"
+				| "resolution"
+				| "resolvedAt"
+				| "resolvedBy"
+			>
+		>,
 	): Promise<ActionLedgerEntry | null>;
 
 	/** Fetch a single entry. */
@@ -129,4 +187,28 @@ export interface ActionLedger {
 	 * per-account decision context so it observes its own past actions' outcomes.
 	 */
 	listRecentByCustomer(customerId: string, limit: number): Promise<ActionLedgerEntry[]>;
+
+	/**
+	 * Atomically claim a notify-then-act row for dispatch.
+	 *
+	 *   UPDATE action_ledger
+	 *      SET status='claimed', claimed_at=?, claimed_by=?, attempt_count=attempt_count+1
+	 *    WHERE id=? AND status='in-flight' AND execute_at <= ?
+	 *
+	 * Returns the post-claim entry if the CAS won; null if another worker beat
+	 * us, the row was cancelled, or it's no longer due. The dispatcher MUST
+	 * re-validate state on the returned row before sending.
+	 */
+	claimForDispatch(
+		id: string,
+		now: Date,
+		workerId: string,
+	): Promise<ActionLedgerEntry | null>;
+
+	/**
+	 * Whether a customer (and optional task) has any open or in-flight work — used
+	 * by the brain loop for dedup. Counts statuses: in-flight, claimed, needs-csm.
+	 * `taskId` narrows the check; omit to check customer-wide.
+	 */
+	hasOpenWork(customerId: string, taskId?: string): Promise<boolean>;
 }
