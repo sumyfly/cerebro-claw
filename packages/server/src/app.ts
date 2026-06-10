@@ -1,9 +1,15 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { verifyLarkSignature } from "@cerebro-claw/channel-lark";
-import { SqliteActionLedger, SqliteSituationStore, SqliteStore } from "@cerebro-claw/memory";
+import {
+	SqliteActionLedger,
+	SqliteCapabilityStore,
+	SqliteSituationStore,
+	SqliteStore,
+} from "@cerebro-claw/memory";
 import type {
 	ActionLedger,
+	CapabilityStore,
 	CustomerChannel,
 	MemoryStore,
 	RenewalSource,
@@ -34,6 +40,7 @@ import { resolveOverrideFromStore } from "./engine/overrides.js";
 import { computeTriageScore, selectByTriage } from "./engine/triage.js";
 import { ExtensionHost } from "./extension-host.js";
 import { loadExtensionsFromDir } from "./extension-loader.js";
+import { TurnRegistry, createMcpHarnessHandler, wrapLedgerForHarness } from "./harness/index.js";
 import { createMcpHandler } from "./mcp-server.js";
 import { errorHandler, notFoundHandler, requestLogger } from "./middleware.js";
 import { type RecentToolCall, createRecentToolCalls } from "./recent-tools.js";
@@ -74,11 +81,27 @@ export async function createApp(): Promise<AppHandles> {
 	mkdirSync(dirname(config.dbPath), { recursive: true });
 	const store: MemoryStore = new SqliteStore(config.dbPath);
 
-	// Action ledger — every act / notify / escalate / prep lands here
-	const ledger: ActionLedger = new SqliteActionLedger(config.dbPath);
+	// Action ledger — every act / notify / escalate / prep lands here. The raw
+	// ledger is the dispatcher/digest source; tools see the harness-wrapped
+	// variant below so every record() auto-inherits turn scope.
+	const rawLedger: ActionLedger = new SqliteActionLedger(config.dbPath);
 
 	// Situation store — persistent storylines so the agent advances, not re-discovers
 	const situationStore: SituationStore = new SqliteSituationStore(config.dbPath);
+
+	// Capability store — grants the CSM issues when resolving escalations, used
+	// to unlock customer-irreversible tools for bounded one-time use.
+	const capabilityStore: CapabilityStore = new SqliteCapabilityStore(config.dbPath);
+
+	// Turn registry — tracks the live agent turns so the MCP pipeline can resolve
+	// `/mcp/turn/:turnId` requests to a TurnContext.
+	const turnRegistry = new TurnRegistry();
+
+	// The ledger seen by extensions/tools: turn-aware. ledger.record() auto-stamps
+	// turn_id, customer_id, task_id, tool_name, blast_radius and idempotency_key
+	// from the active turn context (via AsyncLocalStorage). Out-of-turn calls
+	// (dispatcher, brain loop dedup queries) pass through unchanged.
+	const ledger: ActionLedger = wrapLedgerForHarness(rawLedger);
 
 	// The CSP test backend serves an untrusted/expired TLS cert, which Node's
 	// fetch rejects. CSP_INSECURE_TLS is the opt-in escape hatch for dev/test.
@@ -265,9 +288,25 @@ export async function createApp(): Promise<AppHandles> {
 		await actionObserver(name, params, result);
 	};
 
-	// MCP endpoint — exposes our tools to any external MCP client (Claude Code
-	// subprocess, Cursor, etc.). The Claude Code runtime uses this to call our
-	// tools without an Anthropic API key.
+	// MCP endpoints — exposes our tools to any external MCP client (Claude Code
+	// subprocess, Cursor, etc.).
+	//
+	// The harness route /mcp/turn/:turnId runs the full structural pipeline:
+	// resolves the turn from the registry, filters tools by capability, recheck
+	// the legality matrix, atomically consume a capability when required, scope
+	// the executing tool to the turn via AsyncLocalStorage so the wrapped
+	// ledger auto-stamps every row. The agent runtime targets this route.
+	//
+	// The legacy /mcp route stays for un-scoped callers (chat surfaces today,
+	// external MCP clients without a turn). It runs no pipeline — just exec.
+	// Capability-gated tools are invisible there because there is no scope.
+	const mcpHarnessHandler = createMcpHarnessHandler({
+		tools: () => host.getTools(),
+		turnRegistry,
+		capabilities: capabilityStore,
+		onToolCall,
+	});
+	app.post("/mcp/turn/:turnId", mcpHarnessHandler);
 	app.post(
 		"/mcp",
 		createMcpHandler({
@@ -277,21 +316,30 @@ export async function createApp(): Promise<AppHandles> {
 	);
 
 	// Agent runtime — Claude Code subprocess, reached over the MCP endpoint above.
-	const mcpUrl = `http://127.0.0.1:${config.port}/mcp`;
-	const agent: AgentBackend = new ClaudeCodeRuntime(
-		config.model,
-		host.getTools(),
-		config.claudeBinary,
-		mcpUrl,
-	);
-	console.log("[runtime] Using claude-code");
+	const mcpBaseUrl = `http://127.0.0.1:${config.port}`;
+	const agent: AgentBackend = new ClaudeCodeRuntime({
+		model: config.model,
+		tools: host.getTools(),
+		claudeBinary: config.claudeBinary,
+		mcpBaseUrl,
+		turnRegistry,
+	});
+	console.log("[runtime] Using claude-code (turn-scoped harness)");
 
 	// Now the agent exists — bind the default LLM critic (deferred closure above).
 	// VERIFIER_MODEL runs the critic on its own (cheaper/faster) model via a
-	// second runtime instance; unset = the critic shares the main agent.
+	// second runtime instance; unset = the critic shares the main agent. The
+	// verifier runtime intentionally has NO turn registry — its tool calls are
+	// observational, must not consume capabilities, and must not be auto-scoped
+	// into the parent turn's ledger entries.
 	if (verifyEnabled) {
 		const verifierAgent: AgentBackend = config.verifierModel
-			? new ClaudeCodeRuntime(config.verifierModel, host.getTools(), config.claudeBinary, mcpUrl)
+			? new ClaudeCodeRuntime({
+					model: config.verifierModel,
+					tools: host.getTools(),
+					claudeBinary: config.claudeBinary,
+					mcpBaseUrl,
+				})
 			: agent;
 		verifier = createLlmCriticVerifier(verifierAgent);
 		console.log(
@@ -349,11 +397,35 @@ export async function createApp(): Promise<AppHandles> {
 	);
 
 	// Dispatcher — picks up due notify-then-act sends and pushes them through
-	// the customer channel. Always on, regardless of agent runtime.
+	// the customer channel. Always on, regardless of agent runtime. Dead-lettered
+	// sends (3 failed attempts) open an escalate so the bounce surfaces to the
+	// CSM instead of staying as a counter no one looks at.
 	const dispatcher = new NotifyThenActDispatcher({
-		ledger,
+		ledger: rawLedger,
 		customerChannel,
 		intervalMs: config.dispatcherIntervalMs,
+		async onDeadLetter(entry, error) {
+			try {
+				await rawLedger.record({
+					band: "escalate",
+					customerId: entry.customerId,
+					customerName: entry.customerName,
+					summary: `Customer send to ${entry.customerName ?? entry.customerId} failed permanently`,
+					reason: `Dispatcher exhausted retries on action #${entry.id.slice(0, 8)}: ${error}. Original send was: "${entry.summary}". CSM needs to either retry manually or close the loop with the customer another way.`,
+					status: "needs-csm",
+					createdAt: new Date(),
+					payload: {
+						deadLetterOf: entry.id,
+						originalSummary: entry.summary,
+						lastError: error,
+					},
+					parentId: entry.id,
+				});
+				console.log(`[dispatcher] Opened escalate for dead-lettered ${entry.id}`);
+			} catch (escErr) {
+				console.error("[dispatcher] Failed to open dead-letter escalate:", escErr);
+			}
+		},
 	});
 
 	// --- HTTP Routes ---
@@ -465,18 +537,83 @@ export async function createApp(): Promise<AppHandles> {
 				res.status(400).json({ error: `Cannot resolve — already ${existing.status}` });
 				return;
 			}
+			const outcome = (req.body?.outcome as string) ?? defaultNote;
+			const resolvedBy = (req.body?.resolvedBy as string) ?? "console";
+			// Capability grants: the CSM resolving the escalation may attach
+			// one or more capability names to issue to the agent. These unlock
+			// the matching `requiresCapability` tools for ONE bounded use on
+			// the same account scope. Default expiry 1h; default uses 1.
+			const grantsRequested: Array<{ name: string; uses?: number; expiresInMinutes?: number }> =
+				Array.isArray(req.body?.grants) ? req.body.grants : [];
+			const now = new Date();
 			const updated = await ledger.update(req.params.id, {
 				status: "resolved",
-				note: (req.body?.outcome as string) ?? defaultNote,
-				executedAt: new Date(),
+				note: outcome,
+				executedAt: now,
+				resolution: outcome,
+				resolvedAt: now,
+				resolvedBy,
 			});
-			res.json(updated);
+			const issued = [] as Array<{ id: string; grants: string }>;
+			for (const g of grantsRequested) {
+				if (!g?.name) continue;
+				const granted = await capabilityStore.grant({
+					grants: g.name,
+					scope: { accountId: existing.customerId },
+					parentEscalationId: existing.id,
+					usesRemaining: g.uses && g.uses > 0 ? Math.floor(g.uses) : 1,
+					expiresAt: new Date(
+						now.getTime() + (g.expiresInMinutes && g.expiresInMinutes > 0 ? g.expiresInMinutes : 60) * 60_000,
+					),
+				});
+				issued.push({ id: granted.id, grants: granted.grants });
+			}
+			res.json({ ...updated, capabilitiesIssued: issued });
 		};
 
 	app.post("/api/actions/:id/cancel", cancelHandler("cancelled via console"));
 	app.post("/api/actions/:id/resolve", resolveHandler("resolved via console"));
 	app.post("/api/ledger/:id/cancel", cancelHandler("cancelled via admin API"));
 	app.post("/api/ledger/:id/resolve", resolveHandler("resolved via admin API"));
+
+	// Inspect active capability grants for an account — diagnostic surface so
+	// the CSM (and tests) can see exactly what the agent has unlocked.
+	app.get("/api/capabilities", async (req, res) => {
+		const accountId = String(req.query.accountId ?? "");
+		if (!accountId) {
+			res.status(400).json({ error: "accountId is required" });
+			return;
+		}
+		const grants = await capabilityStore.listActiveForScope({ accountId }, new Date());
+		res.json({ accountId, grants });
+	});
+
+	// Manually issue a capability — useful when the CSM wants to authorize the
+	// agent outside of a specific escalation flow (rare; reserve for ops cases).
+	app.post("/api/capabilities/grant", async (req, res) => {
+		const body = req.body ?? {};
+		const accountId = String(body.accountId ?? "");
+		const grants = String(body.grants ?? "");
+		const parentEscalationId = String(body.parentEscalationId ?? "");
+		if (!accountId || !grants || !parentEscalationId) {
+			res
+				.status(400)
+				.json({ error: "accountId, grants, parentEscalationId are required" });
+			return;
+		}
+		const grant = await capabilityStore.grant({
+			grants,
+			scope: { accountId },
+			parentEscalationId,
+			usesRemaining: Number.isFinite(Number(body.uses)) ? Math.max(1, Math.floor(Number(body.uses))) : 1,
+			expiresAt: new Date(
+				Date.now() +
+					Math.max(1, Number.isFinite(Number(body.expiresInMinutes)) ? Number(body.expiresInMinutes) : 60) *
+						60_000,
+			),
+		});
+		res.json(grant);
+	});
 
 	// "Yesterday: 47 acts, 12 notifies in-flight, 3 situations need you."
 	app.get("/api/digest/counters", async (req, res) => {
@@ -638,7 +775,9 @@ export async function createApp(): Promise<AppHandles> {
 		brainLoop.stop();
 		dispatcher.stop();
 		await host.shutdown();
-		if (ledger instanceof SqliteActionLedger) (ledger as SqliteActionLedger).close();
+		if (rawLedger instanceof SqliteActionLedger) (rawLedger as SqliteActionLedger).close();
+		if (capabilityStore instanceof SqliteCapabilityStore)
+			(capabilityStore as SqliteCapabilityStore).close();
 		if (situationStore instanceof SqliteSituationStore)
 			(situationStore as SqliteSituationStore).close();
 		if (store instanceof SqliteStore) (store as SqliteStore).close();

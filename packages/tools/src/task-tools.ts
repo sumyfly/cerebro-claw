@@ -80,6 +80,8 @@ export function createTaskTools(ctx: TaskToolsContext): ToolDefinition[] {
 
 	const listOpen: ToolDefinition = {
 		name: "task_list_open",
+		kind: "observe",
+		blastRadius: "none",
 		description:
 			"List the CSM's currently-open tasks from Cerebro — the actual queue of work to do (renewal follow-ups, check-ins, churn touches). Use this at the start of a work cycle to see what needs doing, then drill into each with task_get and finish it through the action policy.",
 		parameters: { type: "object", properties: {} },
@@ -95,6 +97,8 @@ export function createTaskTools(ctx: TaskToolsContext): ToolDefinition[] {
 
 	const get: ToolDefinition = {
 		name: "task_get",
+		kind: "observe",
+		blastRadius: "none",
 		description:
 			"Fetch the full context of a single task by id: title, description, linked account (businessId) and renewal, priority, due date. Use this before deciding how to handle a task.",
 		parameters: {
@@ -115,6 +119,8 @@ export function createTaskTools(ctx: TaskToolsContext): ToolDefinition[] {
 
 	const complete: ToolDefinition = {
 		name: "task_complete",
+		kind: "act",
+		blastRadius: "csm-only",
 		description:
 			"Mark a task done after you've actually done the work (logged the note, queued the customer nudge, shipped the brief). Records the outcome to the action ledger tagged with the task id and writes it back to Cerebro. Do NOT complete a task you only escalated — use task_block (or leave it open) so the CSM still owns the open decision.",
 		parameters: {
@@ -182,6 +188,8 @@ export function createTaskTools(ctx: TaskToolsContext): ToolDefinition[] {
 
 	const block: ToolDefinition = {
 		name: "task_block",
+		kind: "act",
+		blastRadius: "csm-only",
 		description:
 			"Mark a task blocked when you can't finish it autonomously (waiting on the CSM's decision, missing info, external dependency). Records the block to the ledger tagged with the task id and writes it back. Typically pair this with an `escalate` call so the CSM has the situation in front of them.",
 		parameters: {

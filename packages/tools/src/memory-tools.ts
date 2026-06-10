@@ -4,6 +4,8 @@ import type { MemoryStore, ToolDefinition } from "@cerebro-claw/shared";
 export function createMemoryTools(store: MemoryStore): ToolDefinition[] {
 	const memoryRead: ToolDefinition = {
 		name: "memory_read",
+		kind: "observe",
+		blastRadius: "none",
 		description:
 			"Read a customer's profile and current state. Returns company info, contacts, health status, open issues, and key dates.",
 		parameters: {
@@ -30,6 +32,8 @@ export function createMemoryTools(store: MemoryStore): ToolDefinition[] {
 
 	const memorySearch: ToolDefinition = {
 		name: "memory_search",
+		kind: "observe",
+		blastRadius: "none",
 		description:
 			"Search a customer's history and instinct notes by keyword. Returns matching interactions, events, decisions, and CSM notes.",
 		parameters: {
@@ -57,6 +61,8 @@ export function createMemoryTools(store: MemoryStore): ToolDefinition[] {
 
 	const memoryUpdate: ToolDefinition = {
 		name: "memory_update",
+		kind: "act",
+		blastRadius: "internal",
 		description:
 			"Update a customer's state (health, open issues, usage trend) or add a history entry.",
 		parameters: {
@@ -117,6 +123,8 @@ export function createMemoryTools(store: MemoryStore): ToolDefinition[] {
 
 	const memoryInstinct: ToolDefinition = {
 		name: "memory_instinct",
+		kind: "act",
+		blastRadius: "internal",
 		description:
 			"Store an instinct note — informal knowledge the CSM shared about a customer that no system captures. Example: 'Mike is the real decision maker' or 'they are evaluating a competitor'.",
 		parameters: {

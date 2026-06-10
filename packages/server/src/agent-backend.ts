@@ -12,12 +12,39 @@ export interface AgentToolCall {
 }
 
 /**
+ * What this turn is about. The harness uses this to scope ledger writes,
+ * capability lookups, and dedup. Callers populate it from the brain loop
+ * (account/task/renewal sweep) or leave it as ad-hoc for chat surfaces.
+ */
+export type PromptSubject =
+	| { kind: "account"; accountId: string }
+	| { kind: "task"; taskId: string; accountId?: string }
+	| { kind: "renewal"; renewalId: string; accountId?: string }
+	| { kind: "ad-hoc"; accountId?: string };
+
+/**
+ * Optional metadata threaded into one `prompt()` call. The runtime forwards it
+ * to the harness so every tool call this turn produces inherits the right scope.
+ */
+export interface PromptOptions {
+	/** Subject of this turn — determines scope for ledger entries and capability filtering. */
+	subject?: PromptSubject;
+	/** Situation this turn is advancing, when there is one. */
+	situationId?: string;
+}
+
+/**
  * Interface implemented by the agent runtime. Today the only implementation is
  * ClaudeCodeRuntime (the `claude` CLI subprocess, reached over MCP). The server
  * consumes this interface so the runtime stays swappable.
  */
 export interface AgentBackend {
-	prompt(userMessage: string, context?: string, sessionId?: string): Promise<AgentResponse>;
+	prompt(
+		userMessage: string,
+		context?: string,
+		sessionId?: string,
+		options?: PromptOptions,
+	): Promise<AgentResponse>;
 	ping(): Promise<{ ok: boolean; error?: string }>;
 	listSessions(): string[];
 	clearSession(sessionId: string): void;

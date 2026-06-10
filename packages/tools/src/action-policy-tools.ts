@@ -186,6 +186,8 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 
 	const act: ToolDefinition = {
 		name: "act",
+		kind: "act",
+		blastRadius: "internal",
 		description:
 			"Record an autonomous action the agent has already taken (Act band), citing evidence of the real effect (the artifact id). NOTE: CSP writes (csp_create_note, csp_update_renewal) are recorded in the ledger AUTOMATICALLY — do NOT also call act for those. Use act only for other verifiable work (e.g. an instinct captured via memory_instinct — cite its id). Reversible, low-stakes, fact-based work only. Increments the daily Act counter in the digest.",
 		parameters: {
@@ -260,6 +262,18 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 
 	const notify: ToolDefinition = {
 		name: "notify_then_send_to_customer",
+		kind: "notify",
+		blastRadius: "customer-reversible",
+		idempotencyKey: (params) => {
+			// Same customer + same scheduled body = same logical send. The first 200
+			// chars of `text` are enough — agents that vary trailing whitespace or
+			// a timestamp would otherwise defeat dedup. recipient is included so a
+			// genuinely different contact target for the same customer still goes.
+			const cid = String(params.customer_id ?? "");
+			const rcp = String(params.recipient ?? "");
+			const text = String(params.text ?? "").slice(0, 200);
+			return `notify:${cid}:${rcp}:${text}`;
+		},
 		description:
 			"Notify-then-act band: send a heads-up to the CSM now, schedule the customer-facing message after a short pause window (default 4h). If the CSM cancels via cancel_pending_action during the window, the send never happens. Use this for routine customer touches: monthly check-ins, feature-adoption nudges, post-onboarding follow-ups, renewal nudges. The CSM only needs to step in if they want to cancel.",
 		parameters: {
@@ -391,6 +405,13 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 
 	const escalate: ToolDefinition = {
 		name: "escalate",
+		kind: "escalate",
+		// An escalate tool itself doesn't take the customer-facing action — it briefs
+		// the CSM. Marking it customer-irreversible declares the action class under
+		// review (so the harness routes it through the critic). The actual irreversible
+		// work, if any, executes only after the CSM resolves it and a capability is
+		// issued.
+		blastRadius: "customer-irreversible",
 		description:
 			"Escalate band: brief the CSM with situation + options + your recommendation. Use this for high-stakes or genuinely ambiguous decisions: churn intervention, discount/commercial concession, contract change, complaint, upsell pitch, stakeholder change. DOES NOT send anything to the customer. The CSM owns the decision; you've done the homework.",
 		parameters: {
@@ -479,6 +500,8 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 
 	const prep: ToolDefinition = {
 		name: "prep",
+		kind: "prep",
+		blastRadius: "csm-only",
 		description:
 			"Prep band: ship a finished v1 the CSM will use to drive a CSM-owned conversation. Examples: pre-call brief 30 min before, renewal brief 30 days out, QBR deck v1, weekly portfolio status, handoff brief. The artifact is delivered to the CSM directly and recorded in the ledger.",
 		parameters: {
@@ -549,6 +572,8 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 
 	const cancel: ToolDefinition = {
 		name: "cancel_pending_action",
+		kind: "act",
+		blastRadius: "internal",
 		description:
 			"Cancel a notify-then-act or escalate entry before it dispatches. Use when new evidence changes the call (CSM said don't, customer self-served, situation resolved). Acts and prep cannot be cancelled — they already happened.",
 		parameters: {
@@ -592,6 +617,8 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 
 	const resolve: ToolDefinition = {
 		name: "resolve_escalation",
+		kind: "act",
+		blastRadius: "internal",
 		description:
 			"Mark an escalation as resolved after the CSM has decided. Records what they chose so the digest moves it out of 'needs-csm' into 'handled today'.",
 		parameters: {

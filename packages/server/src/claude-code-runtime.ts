@@ -1,9 +1,16 @@
 import { spawn } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ToolDefinition } from "@cerebro-claw/shared";
-import type { AgentBackend, AgentResponse } from "./agent-backend.js";
+import type { ToolDefinition, TurnContext } from "@cerebro-claw/shared";
+import type {
+	AgentBackend,
+	AgentResponse,
+	PromptOptions,
+	PromptSubject,
+} from "./agent-backend.js";
+import type { TurnRegistry } from "./harness/turn-registry.js";
 import { SYSTEM_PROMPT } from "./system-prompt.js";
 
 export interface BuildArgsInput {
@@ -40,6 +47,23 @@ export function buildClaudeArgs(input: BuildArgsInput): string[] {
 	return args;
 }
 
+export interface ClaudeCodeRuntimeOptions {
+	model: string;
+	tools: ToolDefinition[];
+	/** Path to the `claude` CLI; default "claude". */
+	claudeBinary?: string;
+	/** Base URL of the local MCP server (e.g. "http://127.0.0.1:7700"). No trailing /mcp. */
+	mcpBaseUrl?: string;
+	/**
+	 * The TurnRegistry the harness MCP pipeline reads from. When provided, each
+	 * prompt() registers a TurnContext and points the subprocess at
+	 * `${mcpBaseUrl}/mcp/turn/<turnId>` so every tool call is scoped. Without it
+	 * the runtime falls back to the legacy `/mcp` endpoint (no scope = no
+	 * capability gating, no auto-stamped ledger fields).
+	 */
+	turnRegistry?: TurnRegistry;
+}
+
 /**
  * The agent runtime: drives the `claude` CLI (Claude Code) as a subprocess.
  * Uses the user's Claude Code login — no ANTHROPIC_API_KEY needed.
@@ -50,45 +74,75 @@ export function buildClaudeArgs(input: BuildArgsInput): string[] {
  *    Cerebro system prompt is injected via `--append-system-prompt`.
  *  - Higher per-turn latency (subprocess startup).
  *  - Requires `claude` on PATH.
+ *
+ * Turn scope. When a TurnRegistry is wired, prompt() generates a fresh
+ * turnId per call, registers a TurnContext (carrying the subject and the
+ * situation, if any), writes a per-turn MCP config pointing the subprocess at
+ * `/mcp/turn/<turnId>`, and releases the registration after the subprocess
+ * exits. All temp files are cleaned in the same finally so a crashed turn
+ * does not leak them.
  */
 export class ClaudeCodeRuntime implements AgentBackend {
 	private sessions = new Map<string, string>(); // our sessionId → Claude Code session_id
 	private model: string;
 	private claudeBinary: string;
 	private tools: ToolDefinition[];
-	private mcpConfigPath: string | null;
+	private mcpBaseUrl: string | null;
 	private allowedToolPatterns: string[];
+	private turnRegistry?: TurnRegistry;
+	/** Fallback config path used when no turn registry is wired. */
+	private legacyMcpConfigPath: string | null;
 
-	constructor(model: string, tools: ToolDefinition[], claudeBinary = "claude", mcpUrl?: string) {
-		this.model = model;
-		this.tools = tools;
-		this.claudeBinary = claudeBinary;
+	constructor(options: ClaudeCodeRuntimeOptions);
+	/** @deprecated Use the options-object constructor; positional args kept for one release. */
+	constructor(model: string, tools: ToolDefinition[], claudeBinary?: string, mcpUrl?: string);
+	constructor(
+		modelOrOptions: string | ClaudeCodeRuntimeOptions,
+		tools?: ToolDefinition[],
+		claudeBinary: string = "claude",
+		mcpUrl?: string,
+	) {
+		const opts: ClaudeCodeRuntimeOptions =
+			typeof modelOrOptions === "string"
+				? {
+						model: modelOrOptions,
+						tools: tools ?? [],
+						claudeBinary,
+						// Legacy callers passed the FULL /mcp URL; convert it to a base by
+						// stripping a trailing /mcp segment so the new per-turn config can
+						// append /mcp/turn/<id>.
+						mcpBaseUrl: mcpUrl?.replace(/\/mcp\/?$/, ""),
+					}
+				: modelOrOptions;
 
-		// If an MCP URL is provided, write an MCP config file the subprocess can
-		// load via --mcp-config. The spawned `claude` will discover our tools
-		// from this endpoint and call them natively over MCP — no Anthropic key
-		// needed (the user's Claude Code login handles inference).
-		if (mcpUrl) {
-			const dir = mkdtempSync(join(tmpdir(), "cerebro-claw-mcp-"));
-			this.mcpConfigPath = join(dir, "mcp-config.json");
-			writeFileSync(
-				this.mcpConfigPath,
-				JSON.stringify({
-					mcpServers: {
-						"cerebro-claw": { type: "http", url: mcpUrl },
-					},
-				}),
-			);
+		this.model = opts.model;
+		this.tools = opts.tools;
+		this.claudeBinary = opts.claudeBinary ?? "claude";
+		this.mcpBaseUrl = opts.mcpBaseUrl ?? null;
+		this.turnRegistry = opts.turnRegistry;
+
+		if (this.mcpBaseUrl) {
 			// Allow Claude Code to call any tool that came from our MCP server
 			// without prompting for approval on each call.
-			this.allowedToolPatterns = tools.map((t) => `mcp__cerebro-claw__${t.name}`);
+			this.allowedToolPatterns = this.tools.map((t) => `mcp__cerebro-claw__${t.name}`);
+			// Build a single legacy config to reuse for callers that don't pass a
+			// subject (chat, ad-hoc). Per-turn callers get a fresh config file.
+			this.legacyMcpConfigPath = writeMcpConfig(this.legacyMcpUrl());
 			console.log(
-				`[claude-code-runtime] MCP config: ${this.mcpConfigPath} (${tools.length} tools exposed)`,
+				`[claude-code-runtime] MCP base: ${this.mcpBaseUrl} (${this.tools.length} tools, ${this.turnRegistry ? "turn-scoped" : "legacy /mcp"})`,
 			);
 		} else {
-			this.mcpConfigPath = null;
+			this.legacyMcpConfigPath = null;
 			this.allowedToolPatterns = [];
 		}
+	}
+
+	private legacyMcpUrl(): string {
+		return `${this.mcpBaseUrl}/mcp`;
+	}
+
+	private turnMcpUrl(turnId: string): string {
+		return `${this.mcpBaseUrl}/mcp/turn/${turnId}`;
 	}
 
 	getOrCreateSession(sessionId: string): string[] {
@@ -124,17 +178,52 @@ export class ClaudeCodeRuntime implements AgentBackend {
 		});
 	}
 
-	async prompt(userMessage: string, context?: string, sessionId?: string): Promise<AgentResponse> {
+	async prompt(
+		userMessage: string,
+		context?: string,
+		sessionId?: string,
+		promptOptions?: PromptOptions,
+	): Promise<AgentResponse> {
 		const claudeSessionId = sessionId ? this.sessions.get(sessionId) : undefined;
+
+		// Decide which MCP config to use. Turn-scoped path requires both a
+		// registry and a base URL — degrade gracefully to legacy if either is
+		// missing so chat surfaces keep working.
+		const useTurn = !!(this.turnRegistry && this.mcpBaseUrl);
+		const turnId = useTurn ? randomUUID() : undefined;
+		const turnConfigPath = useTurn ? writeMcpConfig(this.turnMcpUrl(turnId as string)) : null;
+		if (useTurn && turnId && this.turnRegistry) {
+			const subject: PromptSubject = promptOptions?.subject ?? { kind: "ad-hoc" };
+			const ctx: TurnContext = {
+				id: turnId,
+				subject,
+				situationId: promptOptions?.situationId,
+				startedAt: new Date(),
+			};
+			this.turnRegistry.register(ctx);
+		}
+
+		const mcpConfigPath = turnConfigPath ?? this.legacyMcpConfigPath;
 
 		const args = buildClaudeArgs({
 			userMessage,
 			model: this.model,
 			context,
 			resumeSessionId: claudeSessionId,
-			mcpConfigPath: this.mcpConfigPath,
+			mcpConfigPath,
 			allowedToolPatterns: this.allowedToolPatterns,
 		});
+
+		const cleanup = () => {
+			if (turnId && this.turnRegistry) this.turnRegistry.release(turnId);
+			if (turnConfigPath) {
+				try {
+					rmSync(turnConfigPath, { force: true });
+				} catch {
+					// Tmpfile already gone — ignore.
+				}
+			}
+		};
 
 		return new Promise<AgentResponse>((resolve, reject) => {
 			const child = spawn(this.claudeBinary, args);
@@ -174,10 +263,12 @@ export class ClaudeCodeRuntime implements AgentBackend {
 			});
 
 			child.on("error", (err) => {
+				cleanup();
 				reject(new Error(`Failed to spawn claude: ${err.message}`));
 			});
 
 			child.on("close", (code) => {
+				cleanup();
 				if (code !== 0 && !responseText) {
 					reject(new Error(`claude exited ${code}: ${stderrBuf.trim() || "no output"}`));
 					return;
@@ -189,4 +280,23 @@ export class ClaudeCodeRuntime implements AgentBackend {
 			});
 		});
 	}
+}
+
+/**
+ * Write a `claude` MCP config file pointing at one specific endpoint. The file
+ * lives under a fresh `mkdtempSync` directory so per-turn configs do not
+ * collide. Returns the absolute path of the written file.
+ */
+function writeMcpConfig(mcpUrl: string): string {
+	const dir = mkdtempSync(join(tmpdir(), "cerebro-claw-mcp-"));
+	const path = join(dir, "mcp-config.json");
+	writeFileSync(
+		path,
+		JSON.stringify({
+			mcpServers: {
+				"cerebro-claw": { type: "http", url: mcpUrl },
+			},
+		}),
+	);
+	return path;
 }
