@@ -352,10 +352,17 @@ export async function createApp(): Promise<AppHandles> {
 	}
 
 	// Router and brain loop (brain loop emits lifecycle events through the host).
-	// BRAIN_LOOP_ENABLED=false keeps the API/UI up without spawning agent cycles
-	// (useful for UI work, or running the dashboard against live data read-only).
+	// Auto-start is gated on `mode === "production"` AND BRAIN_LOOP_ENABLED!=false.
+	// Anything other than MODE=Production (including unset) keeps the loop off so
+	// dev never burns tokens in the background. Manual `POST /api/brain/cycle`
+	// still works in every mode.
 	const router = new Router(agent, { store });
-	const brainLoopEnabled = !/^(0|false|no)$/i.test(process.env.BRAIN_LOOP_ENABLED ?? "");
+	const brainLoopEnabled = config.brainLoopEnabled;
+	if (config.mode !== "production") {
+		console.log(
+			`[work-loop] MODE=${process.env.MODE || "(unset)"} — auto-start gated to MODE=Production. Trigger manually with POST /api/brain/cycle.`,
+		);
+	}
 
 	// Pick account source: CSP (live) when CSP_TOKEN + CSP_CSM_EMAIL are configured,
 	// otherwise fall back to the local SQLite store (demo / seed mode).
