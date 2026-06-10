@@ -132,14 +132,20 @@ export function createMemoryTools(store: MemoryStore): ToolDefinition[] {
 			required: ["customer_id", "note"],
 		},
 		async execute(params) {
+			const id = randomUUID();
 			await store.addInstinct({
-				id: randomUUID(),
+				id,
 				customerId: params.customer_id as string,
 				content: params.note as string,
 				source: (params.source as string) ?? "csm",
 				createdAt: new Date(),
 			});
-			return { content: `Instinct noted for customer ${params.customer_id}.`, success: true };
+			// The id is the citable artifact — usable as `act` evidence {kind:"other", id}.
+			return {
+				content: `Instinct noted for customer ${params.customer_id} (id: ${id}).`,
+				success: true,
+				details: { instinctId: id },
+			};
 		},
 	};
 

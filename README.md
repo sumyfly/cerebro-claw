@@ -20,7 +20,7 @@ Six modules, all pluggable through the extension system:
 
 | Module | What it does |
 |---|---|
-| Agent Runtime | Anthropic agent loop with tool execution and per-customer chat sessions |
+| Agent Runtime | Claude Code subprocess (MCP tool transport, your Claude Code login) with per-customer chat sessions |
 | Customer Memory | SQLite-backed four-layer store (profile, state, history, instinct) |
 | Brain Loop | Scheduled scan → judge → act/alert cycle, also generates digests |
 | Channel Layer | Lark IM (cards + signature-verified webhooks); any channel can be added as an extension |
@@ -37,12 +37,12 @@ pnpm turbo build
 pnpm turbo dev
 ```
 
-- Server: <http://localhost:3000>
+- Server: <http://localhost:5100>
 - Web UI: <http://localhost:5173>
 
 The Customers tab reads live from CSP when `CSP_TOKEN` + `CSP_CSM_EMAIL` are set (see [`docs/setup.md`](docs/setup.md)).
 
-Without credentials the server runs in degraded mode (agent can't think). See [`docs/setup.md`](docs/setup.md) for adding Anthropic + Lark.
+The agent runs on your Claude Code login — install the `claude` CLI and log in, no API key needed. See [`docs/setup.md`](docs/setup.md) for Claude Code + Lark setup.
 
 ## Layout
 
@@ -65,7 +65,7 @@ Without credentials the server runs in degraded mode (agent can't think). See [`
 | Route | What |
 |---|---|
 | `GET /health` | Server status + loaded extensions/tools (public) |
-| `GET /api/diagnostics` | Live connectivity check: DB, Anthropic ping, Lark credentials |
+| `GET /api/diagnostics` | Live connectivity check: DB, Claude Code CLI ping, Lark credentials |
 | `GET /api/customers` | List customers with current state |
 | `GET /api/customers/:id` | Full detail (profile, state, history, instincts) |
 | `POST /api/chat` | Multi-turn chat with the agent |

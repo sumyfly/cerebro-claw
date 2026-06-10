@@ -2,10 +2,26 @@ import { randomUUID } from "node:crypto";
 import type { NextFunction, Request, Response } from "express";
 
 /**
+ * Endpoints the admin UI polls on a short interval (usePoll, ~5s). Logging every
+ * successful poll buries the meaningful lines (brain-loop, mutations, errors) in
+ * noise, so we suppress them when they succeed. Failures (>=400) still log, and
+ * LOG_ALL_REQUESTS=true re-enables full verbosity for debugging.
+ */
+const NOISY_POLL_PATHS = new Set([
+	"/health",
+	"/api/ledger",
+	"/api/ledger/open",
+	"/api/tasks",
+	"/api/digest/counters",
+	"/api/tools/recent",
+]);
+
+/**
  * Tags every incoming request with a UUID and logs method + path + status + duration.
  * Request ID is exposed as X-Request-Id and on res.locals.requestId for downstream use.
  */
 export function requestLogger() {
+	const logAll = /^(1|true|yes)$/i.test(process.env.LOG_ALL_REQUESTS ?? "");
 	return (req: Request, res: Response, next: NextFunction) => {
 		const requestId = (req.header("X-Request-Id") as string | undefined) ?? randomUUID();
 		res.setHeader("X-Request-Id", requestId);
@@ -14,8 +30,9 @@ export function requestLogger() {
 		const start = Date.now();
 		res.on("finish", () => {
 			const duration = Date.now() - start;
-			// Skip noisy health checks unless they fail
-			if (req.path === "/health" && res.statusCode < 400) return;
+			// Skip successful high-frequency UI polls unless full logging is requested.
+			if (!logAll && req.method === "GET" && res.statusCode < 400 && NOISY_POLL_PATHS.has(req.path))
+				return;
 			console.log(
 				`[req ${requestId.slice(0, 8)}] ${req.method} ${req.path} ${res.statusCode} ${duration}ms`,
 			);

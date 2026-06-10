@@ -29,6 +29,6 @@ COPY --from=build /app/packages/channel-lark/dist ./packages/channel-lark/dist
 COPY --from=build /app/packages/server/dist ./packages/server/dist
 COPY extensions ./extensions
 
-EXPOSE 3000
+EXPOSE 5100
 WORKDIR /app/packages/server
 CMD ["node", "dist/index.js"]

@@ -142,6 +142,29 @@ describe("InMemoryActionLedger", () => {
 		expect(open.map((e) => e.summary).sort()).toEqual(["awaiting csm", "queued"]);
 	});
 
+	it("listRecentByCustomer returns only that customer's entries, newest first, limited", async () => {
+		for (let i = 0; i < 4; i++) {
+			await ledger.record({
+				band: "act",
+				customerId: "biz-1",
+				summary: `act ${i}`,
+				reason: "x",
+				status: "done",
+				createdAt: new Date(Date.UTC(2026, 4, 1 + i)),
+			});
+		}
+		await ledger.record({
+			band: "act",
+			customerId: "biz-2",
+			summary: "other customer",
+			reason: "x",
+			status: "done",
+			createdAt: new Date(Date.UTC(2026, 4, 10)),
+		});
+		const recent = await ledger.listRecentByCustomer("biz-1", 3);
+		expect(recent.map((e) => e.summary)).toEqual(["act 3", "act 2", "act 1"]);
+	});
+
 	it("get returns null for unknown id", async () => {
 		expect(await ledger.get("nope")).toBeNull();
 	});

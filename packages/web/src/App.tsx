@@ -1,23 +1,40 @@
 import { ConfigProvider, theme } from "antd";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { AppLayout } from "./components/Layout.js";
-import { Activity } from "./pages/Activity.js";
-import { Customers } from "./pages/Customers.js";
-import { Dashboard } from "./pages/Dashboard.js";
-import { Extensions } from "./pages/Extensions.js";
+import { Escalations } from "./pages/Escalations.js";
+import { Pipeline } from "./pages/Pipeline.js";
+import { Settings } from "./pages/Settings.js";
+import { Situations } from "./pages/Situations.js";
+import { Skills } from "./pages/Skills.js";
+import "./theme.css";
 
 export function App() {
 	return (
-		<ConfigProvider theme={{ algorithm: theme.defaultAlgorithm }}>
+		<ConfigProvider
+			theme={{
+				algorithm: theme.darkAlgorithm,
+				token: {
+					colorBgBase: "#0a0e14",
+					colorBgContainer: "#10151f",
+					colorBorder: "#1c2430",
+					colorPrimary: "#2dd4bf",
+					colorText: "#c6d0dd",
+					colorTextSecondary: "#6b7787",
+					borderRadius: 4,
+					fontFamily: "'IBM Plex Sans', system-ui, sans-serif",
+				},
+			}}
+		>
 			<BrowserRouter>
-				<AppLayout>
-					<Routes>
-						<Route path="/" element={<Dashboard />} />
-						<Route path="/customers" element={<Customers />} />
-						<Route path="/activity" element={<Activity />} />
-						<Route path="/extensions" element={<Extensions />} />
-					</Routes>
-				</AppLayout>
+				<Routes>
+					<Route element={<AppLayout />}>
+						<Route path="/" element={<Pipeline />} />
+						<Route path="/situation" element={<Situations />} />
+						<Route path="/escalation" element={<Escalations />} />
+						<Route path="/skills" element={<Skills />} />
+						<Route path="/settings" element={<Settings />} />
+					</Route>
+				</Routes>
 			</BrowserRouter>
 		</ConfigProvider>
 	);

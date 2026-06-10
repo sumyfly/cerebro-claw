@@ -1,3 +1,4 @@
+import type { ActionBandDef } from "./action.js";
 import type { MemoryStore } from "./memory.js";
 import type { InboundMessage } from "./message.js";
 import type { ToolDefinition } from "./tool.js";
@@ -34,8 +35,6 @@ export type ExtensionEvent =
 	| "channel_message_sent"
 	| "brain_loop_cycle_start"
 	| "brain_loop_cycle_end"
-	| "pending_action_created"
-	| "pending_action_resolved"
 	| "shutdown";
 
 export type EventHandler<T = unknown> = (payload: T) => void | Promise<void>;
@@ -50,6 +49,15 @@ export interface ExtensionAPI {
 
 	/** Subscribe to a lifecycle event. */
 	on(event: ExtensionEvent, handler: EventHandler): void;
+
+	/**
+	 * Register an additional action band (beyond the default four). The band's
+	 * tool must also be registered via registerTool. This is the seam that keeps
+	 * the action policy extensible without editing core — e.g. a future
+	 * "observe-only" band — though observe-only is intentionally modeled as a
+	 * Situation, not a band (see the clarify-agent-architecture change).
+	 */
+	registerBand(band: ActionBandDef): void;
 
 	/** Read-only access to the customer memory store. */
 	getStore(): MemoryStore;

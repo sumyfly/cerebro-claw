@@ -1,4 +1,4 @@
-import { InMemoryStore } from "@cerebro-claw/memory";
+import { InMemoryActionLedger, InMemoryStore } from "@cerebro-claw/memory";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createCspAccountSource } from "../brain-loop.js";
 
@@ -129,6 +129,76 @@ describe("createCspAccountSource — engine injection", () => {
 		const second = await createCspAccountSource(opts(store)).buildSummary(ID, "Acme");
 		expect(second).toContain("Health: 54");
 		expect(second).toContain("trend down");
+	});
+
+	it("injects the account's recent ledger actions (the closed loop)", async () => {
+		mockCsp({
+			[`/api/v1/accounts/${ID}`]: { id: ID, name: "Acme" },
+			[`/api/v1/accounts/${ID}/health-score`]: { overall: { score: 70, category: "GOOD" } },
+			[`/api/v1/accounts/${ID}/engagement`]: [],
+		});
+		const ledger = new InMemoryActionLedger();
+		await ledger.record({
+			band: "notify-then-act",
+			customerId: ID,
+			summary: "Send to Acme: usage check-in",
+			reason: "30d silent",
+			status: "executed",
+			createdAt: new Date("2026-05-28T00:00:00Z"), // 5 days before NOW
+			executedAt: new Date("2026-05-28T04:00:00Z"),
+		});
+		await ledger.record({
+			band: "act",
+			customerId: ID,
+			summary: "Logged a CSP note",
+			reason: "x",
+			status: "failed",
+			createdAt: new Date("2026-06-01T00:00:00Z"),
+			note: "CSP rejected the write",
+		});
+		const source = createCspAccountSource({ ...opts(), ledger });
+		const summary = await source.buildSummary(ID, "Acme");
+		expect(summary).toContain("Recent agent actions");
+		expect(summary).toContain("[notify-then-act/executed] 5d ago: Send to Acme: usage check-in");
+		expect(summary).toContain("FAILED: CSP rejected the write");
+	});
+
+	it("omits the recent-actions block when the account has no history", async () => {
+		mockCsp({
+			[`/api/v1/accounts/${ID}`]: { id: ID, name: "Acme" },
+			[`/api/v1/accounts/${ID}/health-score`]: { overall: { score: 70, category: "GOOD" } },
+			[`/api/v1/accounts/${ID}/engagement`]: [],
+		});
+		const source = createCspAccountSource({ ...opts(), ledger: new InMemoryActionLedger() });
+		const summary = await source.buildSummary(ID, "Acme");
+		expect(summary).not.toContain("Recent agent actions");
+	});
+
+	it("a failed prepare never serves the previous cycle's cached summary", async () => {
+		mockCsp({
+			[`/api/v1/accounts/${ID}`]: { id: ID, name: "Acme" },
+			[`/api/v1/accounts/${ID}/health-score`]: { overall: { score: 80, category: "GOOD" } },
+			[`/api/v1/accounts/${ID}/engagement`]: [],
+		});
+		// Ledger that works in cycle N then breaks — compute() throws mid-way.
+		const ledger = new InMemoryActionLedger();
+		let dbDown = false;
+		const original = ledger.listRecentByCustomer.bind(ledger);
+		ledger.listRecentByCustomer = async (customerId, limit) => {
+			if (dbDown) throw new Error("db down");
+			return original(customerId, limit);
+		};
+		const source = createCspAccountSource({ ...opts(), ledger });
+		// Cycle N: prepared (then skipped/deferred — onEvaluated never runs).
+		expect(await source.prepare!(ID, "Acme")).not.toBeNull();
+		// Cycle N+1: compute fails; prepare returns null (must-review), and
+		// buildSummary must degrade to the pointer — NOT return cycle-N's
+		// cached "Health: 80" summary as if it were current.
+		dbDown = true;
+		expect(await source.prepare!(ID, "Acme")).toBeNull();
+		const summary = await source.buildSummary(ID, "Acme");
+		expect(summary).not.toContain("Health: 80");
+		expect(summary).toContain("csp_get_account"); // the degrade-to-pointer path
 	});
 
 	it("degrades to the pointer prompt when CSP fetch fails", async () => {

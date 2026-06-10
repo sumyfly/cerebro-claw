@@ -1,14 +1,90 @@
-import type { ExtensionEvent, MemoryStore } from "@cerebro-claw/shared";
-import { type AgentBackend, friendlyAnthropicError } from "./agent-runtime.js";
+import type {
+	ActionLedger,
+	ExtensionEvent,
+	MemoryStore,
+	RenewalSource,
+	SituationStore,
+	TaskSource,
+} from "@cerebro-claw/shared";
+import type { AgentBackend } from "./agent-backend.js";
+import { mapWithConcurrency } from "./engine/concurrency.js";
 import { cspToSnapshot, deriveHealthTrend } from "./engine/csp-snapshot.js";
-import { renderDecisionContext } from "./engine/decision-context.js";
+import {
+	renderDecisionContext,
+	renderRecentActions,
+	renderSituations,
+} from "./engine/decision-context.js";
 import { parseOverrideBand } from "./engine/overrides.js";
+import { renderRenewalContext } from "./engine/renewal-context.js";
 import { type AccountSnapshot, computeSignals } from "./engine/signals.js";
-import { BAND_GUIDANCE, reviewPointer } from "./review-prompt.js";
+import { renderTaskContext } from "./engine/task-context.js";
+import {
+	type TriageInput,
+	type TriageScore,
+	computeTriageScore,
+	selectByTriage,
+} from "./engine/triage.js";
+import { BAND_GUIDANCE, RENEWAL_GUIDANCE, TASK_GUIDANCE, reviewPointer } from "./review-prompt.js";
 
 export interface EventEmitter {
 	emit<T = unknown>(event: ExtensionEvent, payload: T): Promise<void>;
 }
+
+/** Per-sweep tally: how many subjects were worked vs. how many were eligible. */
+export interface SweepCount {
+	evaluated: number;
+	available: number;
+}
+
+/** What one cycle did — returned by `runCycle`/`runOnce`. */
+export interface CycleSummary {
+	/** Always true here; the busy path returns `{ ran: false, reason }` instead. */
+	ran: true;
+	/** Effective per-sweep fan-out cap for this run (0 = no cap). */
+	limit: number;
+	accounts: SweepCount;
+	tasks: SweepCount;
+	renewals: SweepCount;
+	actionsTaken: number;
+	durationMs: number;
+}
+
+/**
+ * The cheap pre-review computation for one account: the real triage inputs
+ * plus everything the skip gate needs to decide whether an agent turn is
+ * warranted at all. Produced by `AccountSource.prepare` — no LLM involved.
+ */
+export interface AccountReviewPlan {
+	/** Real triage inputs (health, trend, renewal, value, override). */
+	triage: TriageInput;
+	/** First look, or the signal fingerprint moved since the last review. */
+	changedSinceLastCycle: boolean;
+	/** Open Situations always bypass the skip gate (a storyline is in flight). */
+	hasOpenSituations: boolean;
+	/** Days to the soonest open renewal (negative = overdue, null = none known). */
+	daysToRenewal: number | null;
+	/** When the agent last actually reviewed this account (null = never). */
+	lastReviewedAt: Date | null;
+}
+
+/** Skip-gate knobs — what lets an unchanged account skip its agent turn. */
+export interface AccountGateOptions {
+	/** Gate on/off. Off = every listed account is eligible (legacy behavior). */
+	enabled: boolean;
+	/** A renewal within this many days always bypasses the gate. */
+	renewalHorizonDays: number;
+	/** Force a review after this many days skipped, even if unchanged. */
+	maxSkipAgeDays: number;
+}
+
+export const DEFAULT_GATE: AccountGateOptions = {
+	enabled: true,
+	renewalHorizonDays: 90,
+	maxSkipAgeDays: 7,
+};
+
+/** Concurrency cap for the cheap per-account CSP GETs in the prepare fan-out. */
+const PREPARE_CONCURRENCY = 4;
 
 /**
  * What the brain loop iterates over each cycle. Implementations decide where
@@ -21,10 +97,16 @@ export interface AccountSource {
 	/** List the accounts to evaluate this cycle. Should be cheap. */
 	list(): Promise<{ id: string; companyName: string }[]>;
 	/**
+	 * Cheap pre-review pass: compute the signals/fingerprint and return the
+	 * review plan the skip gate + triage rank on. MUST be side-effect free.
+	 * Optional — sources without signals (local demo) skip the gate entirely.
+	 * Return null on failure; the loop then treats the account as must-review.
+	 */
+	prepare?(id: string, companyName: string): Promise<AccountReviewPlan | null>;
+	/**
 	 * Build the per-account context fed to the agent. MUST be side-effect free —
-	 * it is called both per-cycle (evaluateCustomer) and on-demand (runDigest), so
-	 * it may run several times per account. Persisting state here would corrupt
-	 * change-detection; record that in `onEvaluated` instead.
+	 * it may run several times per account within a cycle. Persisting state here
+	 * would corrupt change-detection; record that in `onEvaluated` instead.
 	 */
 	buildSummary(id: string, companyName: string): Promise<string>;
 	/**
@@ -88,6 +170,12 @@ export interface CspAccountSourceOptions {
 	maxAccounts?: number;
 	/** Memory store — supplies instinct notes + stored overrides for the signals. */
 	store?: MemoryStore;
+	/** Situation store — supplies open storylines so the agent advances, not re-discovers. */
+	situationStore?: SituationStore;
+	/** Action ledger — supplies the account's recent actions for the closed loop. */
+	ledger?: ActionLedger;
+	/** How many recent ledger entries to inject per account (default 5). */
+	recentActionsLimit?: number;
 	/** Clock override (tests). */
 	now?: () => Date;
 }
@@ -118,15 +206,91 @@ export function createCspAccountSource(opts: CspAccountSourceOptions): AccountSo
 		}
 	}
 
-	// Cache the fingerprint computed in buildSummary so onEvaluated can persist
-	// it exactly once per cycle (buildSummary itself must stay side-effect free).
+	// Cache the fingerprint computed during the review pass so onEvaluated can
+	// persist it exactly once per cycle (prepare/buildSummary stay side-effect free).
 	const pendingSnapshot = new Map<string, { signalFingerprint: string; healthScore?: number }>();
+	// Per-cycle cache so prepare() and buildSummary() share one CSP fetch — the
+	// prepare fan-out already computed everything the summary needs.
+	const prepared = new Map<string, { summary: string; plan: AccountReviewPlan }>();
+
+	/** One full signal computation for an account: rendered summary + review plan. */
+	async function compute(
+		id: string,
+		companyName: string,
+	): Promise<{ summary: string; plan: AccountReviewPlan }> {
+		const pointer = reviewPointer(companyName, id);
+		const [account, health, engagement] = await Promise.all([
+			getData(`/api/v1/accounts/${id}`),
+			getData(`/api/v1/accounts/${id}/health-score`),
+			getData(`/api/v1/accounts/${id}/engagement`),
+		]);
+		const instinctEntries = opts.store ? await opts.store.getInstincts(id) : [];
+		const instincts = instinctEntries.map((i) => i.content);
+		const overrideBand = parseOverrideBand(instincts);
+		const last = opts.store ? await opts.store.getLastDecision(id) : null;
+		const now = (opts.now ?? (() => new Date()))();
+		// Map the REAL CSP shapes into the engine snapshot, then layer in
+		// agent-private memory (instincts, overrides, last decision).
+		const mapped = cspToSnapshot({ account, health, engagement }, now);
+		// Derive the health TREND from last cycle's score (CSP has no trend field).
+		const healthTrend = deriveHealthTrend(mapped.healthScore?.overallScore, last?.healthScore);
+		const snapshot: AccountSnapshot = {
+			...mapped,
+			healthScore: mapped.healthScore
+				? { ...mapped.healthScore, trend: healthTrend }
+				: mapped.healthScore,
+			instincts,
+			overrides: overrideBand ? [{ rule: "stored override", forcesBand: overrideBand }] : [],
+			lastDecision: last
+				? { signalFingerprint: last.signalFingerprint, band: last.band, reason: last.reason }
+				: undefined,
+		};
+		const signals = computeSignals(snapshot);
+		// Stash this cycle's fingerprint; onEvaluated persists it ONCE after
+		// the agent reviews. Recording here would corrupt change-detection,
+		// since prepare/buildSummary may run several times per cycle.
+		pendingSnapshot.set(id, {
+			signalFingerprint: signals.signalFingerprint,
+			healthScore: mapped.healthScore?.overallScore,
+		});
+		const context = renderDecisionContext(signals, instincts);
+		const situations = opts.situationStore ? await opts.situationStore.listOpen(id) : [];
+		const situationBlock = renderSituations(situations, now);
+		// Closed loop: the agent sees its own recent actions and their outcomes.
+		const recent = opts.ledger
+			? await opts.ledger.listRecentByCustomer(id, opts.recentActionsLimit ?? 5)
+			: [];
+		const recentBlock = renderRecentActions(recent, now);
+		const summary = [context, situationBlock, recentBlock, pointer].filter(Boolean).join("\n\n");
+		const plan: AccountReviewPlan = {
+			triage: {
+				healthScore: signals.healthScore ?? undefined,
+				healthGrade: signals.healthGrade ?? undefined,
+				healthTrend: (signals.healthTrend as TriageInput["healthTrend"]) ?? undefined,
+				usageTrend: (signals.usageTrend as TriageInput["usageTrend"]) ?? undefined,
+				contractValue: signals.contractValue ?? undefined,
+				daysToRenewal: signals.daysToRenewal ?? undefined,
+				overrideForcesBand: signals.overrideForcesBand ?? undefined,
+			},
+			changedSinceLastCycle: signals.changedSinceLastCycle,
+			hasOpenSituations: situations.length > 0,
+			daysToRenewal: signals.daysToRenewal,
+			lastReviewedAt: last?.ts ?? null,
+		};
+		return { summary, plan };
+	}
 
 	return {
 		label: `CSP (${opts.csmEmail})`,
 		async list() {
 			const ac = new AbortController();
 			const t = setTimeout(() => ac.abort(), timeoutMs);
+			// New cycle: drop every cached computation from the previous one. This
+			// bounds both maps to one cycle's accounts and guarantees no stale
+			// summary or fingerprint can outlive the cycle that computed it
+			// (skipped/deferred accounts never reach onEvaluated's per-id delete).
+			prepared.clear();
+			pendingSnapshot.clear();
 			try {
 				const qs = new URLSearchParams();
 				qs.set("assignedCsmId", opts.csmEmail);
@@ -139,69 +303,50 @@ export function createCspAccountSource(opts: CspAccountSourceOptions): AccountSo
 					signal: ac.signal,
 				});
 				if (!res.ok) {
-					console.error(`[brain-loop] CSP list failed: HTTP ${res.status}`);
+					console.error(`[work-loop] CSP list failed: HTTP ${res.status}`);
 					return [];
 				}
 				const body = (await res.json()) as { data?: { id: string; name: string }[] };
 				return (body.data ?? []).map((a) => ({ id: a.id, companyName: a.name }));
 			} catch (err) {
-				console.error(`[brain-loop] CSP list error: ${(err as Error).message}`);
+				console.error(`[work-loop] CSP list error: ${(err as Error).message}`);
 				return [];
 			} finally {
 				clearTimeout(t);
 			}
 		},
+		async prepare(id, companyName) {
+			// Evict any earlier result FIRST so a failed compute can never leave a
+			// stale summary/fingerprint behind for buildSummary/onEvaluated to use.
+			prepared.delete(id);
+			pendingSnapshot.delete(id);
+			try {
+				const result = await compute(id, companyName);
+				prepared.set(id, result);
+				return result.plan;
+			} catch (err) {
+				console.error(`[work-loop] prepare failed for ${companyName}: ${(err as Error).message}`);
+				return null; // caller treats as must-review
+			}
+		},
 		async buildSummary(id, companyName) {
-			const pointer = reviewPointer(companyName, id);
-
+			// The prepare fan-out usually computed this already — reuse its fetch.
+			const cached = prepared.get(id);
+			if (cached) return cached.summary;
 			// Compute the decision signals server-side and inject them so the agent
 			// reasons with structured inputs (health/usage/renewal/override/change),
 			// not just raw text. Degrade gracefully to the pointer prompt on failure.
 			try {
-				const [account, health, engagement] = await Promise.all([
-					getData(`/api/v1/accounts/${id}`),
-					getData(`/api/v1/accounts/${id}/health-score`),
-					getData(`/api/v1/accounts/${id}/engagement`),
-				]);
-				const instinctEntries = opts.store ? await opts.store.getInstincts(id) : [];
-				const instincts = instinctEntries.map((i) => i.content);
-				const overrideBand = parseOverrideBand(instincts);
-				const last = opts.store ? await opts.store.getLastDecision(id) : null;
-				const now = (opts.now ?? (() => new Date()))();
-				// Map the REAL CSP shapes into the engine snapshot, then layer in
-				// agent-private memory (instincts, overrides, last decision).
-				const mapped = cspToSnapshot({ account, health, engagement }, now);
-				// Derive the health TREND from last cycle's score (CSP has no trend field).
-				const healthTrend = deriveHealthTrend(mapped.healthScore?.overallScore, last?.healthScore);
-				const snapshot: AccountSnapshot = {
-					...mapped,
-					healthScore: mapped.healthScore
-						? { ...mapped.healthScore, trend: healthTrend }
-						: mapped.healthScore,
-					instincts,
-					overrides: overrideBand ? [{ rule: "stored override", forcesBand: overrideBand }] : [],
-					lastDecision: last
-						? { signalFingerprint: last.signalFingerprint, band: last.band, reason: last.reason }
-						: undefined,
-				};
-				const signals = computeSignals(snapshot);
-				// Stash this cycle's fingerprint; onEvaluated persists it ONCE after
-				// the agent reviews. Recording here would corrupt change-detection,
-				// since buildSummary also runs from runDigest / repeat calls.
-				pendingSnapshot.set(id, {
-					signalFingerprint: signals.signalFingerprint,
-					healthScore: mapped.healthScore?.overallScore,
-				});
-				const context = renderDecisionContext(signals, instincts);
-				return `${context}\n\n${pointer}`;
+				return (await compute(id, companyName)).summary;
 			} catch (err) {
 				console.error(
-					`[brain-loop] signal computation failed for ${companyName}: ${(err as Error).message}`,
+					`[work-loop] signal computation failed for ${companyName}: ${(err as Error).message}`,
 				);
-				return pointer;
+				return reviewPointer(companyName, id);
 			}
 		},
 		async onEvaluated(id) {
+			prepared.delete(id);
 			const snap = pendingSnapshot.get(id);
 			if (!snap || !opts.store) return;
 			pendingSnapshot.delete(id);
@@ -230,6 +375,15 @@ export class BrainLoop {
 	private enabled: boolean;
 	private emitter: EventEmitter | null;
 	private source: AccountSource;
+	private taskSource: TaskSource | null;
+	private ledger: ActionLedger | null;
+	private renewalSource: RenewalSource | null;
+	private situationStore: SituationStore | null;
+	private triageMax: number;
+	private triageMinScore: number;
+	private runOnStart: boolean;
+	private gate: AccountGateOptions;
+	private concurrency: number;
 
 	constructor(
 		store: MemoryStore,
@@ -238,6 +392,15 @@ export class BrainLoop {
 		enabled = true,
 		emitter: EventEmitter | null = null,
 		source?: AccountSource,
+		taskSource: TaskSource | null = null,
+		ledger: ActionLedger | null = null,
+		renewalSource: RenewalSource | null = null,
+		situationStore: SituationStore | null = null,
+		triageMax = 0,
+		triageMinScore = 0,
+		runOnStart = false,
+		gate: Partial<AccountGateOptions> = {},
+		concurrency = 3,
 	) {
 		this.store = store;
 		this.agent = agent;
@@ -245,17 +408,102 @@ export class BrainLoop {
 		this.enabled = enabled;
 		this.emitter = emitter;
 		this.source = source ?? createLocalAccountSource(store);
+		this.taskSource = taskSource;
+		this.ledger = ledger;
+		this.renewalSource = renewalSource;
+		this.situationStore = situationStore;
+		this.triageMax = triageMax;
+		this.triageMinScore = triageMinScore;
+		this.runOnStart = runOnStart;
+		this.gate = { ...DEFAULT_GATE, ...gate };
+		this.concurrency = Number.isFinite(concurrency) ? Math.max(1, Math.floor(concurrency)) : 1;
+	}
+
+	/**
+	 * Run agent turns over subjects with bounded parallelism (1 = serial).
+	 * Per-item throws (e.g. a getContext/buildSummary outside the evaluator's own
+	 * try, or onEvaluated in its finally) are logged, never silently dropped —
+	 * the old serial loop surfaced them via runCycle's catch.
+	 */
+	private async evaluateAll<T>(
+		items: T[],
+		evaluate: (item: T) => Promise<number>,
+		label: string,
+	): Promise<number> {
+		const counts = await mapWithConcurrency(items, this.concurrency, evaluate, (item, err) => {
+			const detail = err instanceof Error ? err.message : String(err);
+			console.error(`[work-loop] ${label} evaluation failed: ${detail}`, item);
+			return 0;
+		});
+		return counts.reduce((sum, n) => sum + n, 0);
+	}
+
+	/**
+	 * The change-detection gate: an unchanged account with no open Situation and
+	 * no renewal in the horizon skips its (expensive) agent turn this cycle.
+	 * Never skips indefinitely — past maxSkipAgeDays the account is re-reviewed.
+	 */
+	private shouldSkipAccount(plan: AccountReviewPlan, now: Date): boolean {
+		if (!this.gate.enabled) return false;
+		if (plan.changedSinceLastCycle) return false;
+		if (plan.hasOpenSituations) return false;
+		if (plan.daysToRenewal != null && plan.daysToRenewal <= this.gate.renewalHorizonDays) {
+			return false;
+		}
+		// Defensive: unchanged implies a prior review exists, but if it doesn't, review.
+		if (!plan.lastReviewedAt) return false;
+		const ageDays = (now.getTime() - plan.lastReviewedAt.getTime()) / 86_400_000;
+		return ageDays < this.gate.maxSkipAgeDays;
+	}
+
+	/**
+	 * Triage gate: when enabled (max > 0), rank candidates by score and keep only
+	 * the top-N above the floor, logging what was deferred. When disabled (max = 0)
+	 * every candidate is worked. `max` defaults to the configured `triageMax`; a
+	 * manual single cycle passes its own cap to override it for that run only.
+	 */
+	private triageSelect<T>(
+		items: T[],
+		scoreOf: (t: T) => TriageScore,
+		label: string,
+		max: number = this.triageMax,
+	): T[] {
+		if (max <= 0 || items.length === 0) return items;
+		const { selected, deferred } = selectByTriage(items, scoreOf, {
+			max,
+			minScore: this.triageMinScore,
+		});
+		if (deferred.length > 0) {
+			const below = deferred.filter((d) => d.reason === "below-floor").length;
+			const over = deferred.length - below;
+			console.log(
+				`[work-loop] ${label} triage: ${selected.length} worked, ${deferred.length} deferred (${below} below floor, ${over} over budget)`,
+			);
+		}
+		return selected.map((s) => s.item);
+	}
+
+	/**
+	 * Run exactly one cycle on demand (manual trigger / dashboard button). Returns
+	 * the cycle summary, or a busy marker if a cycle is already running. `limit`
+	 * caps the per-sweep fan-out for this run: omitted → cap of 3 (cheap by
+	 * default for dev); 0 → no cap (full run); N>0 → top-N per sweep.
+	 */
+	async runOnce(opts?: { limit?: number }): Promise<CycleSummary | { ran: false; reason: string }> {
+		if (this.running) return { ran: false, reason: "cycle already running" };
+		const cap = opts?.limit === undefined ? 3 : opts.limit;
+		return this.runCycle(cap);
 	}
 
 	start(): void {
 		if (!this.enabled) {
-			console.log("[brain-loop] Disabled (no ANTHROPIC_API_KEY). Set it to enable proactive mode.");
+			console.log("[work-loop] Disabled.");
 			return;
 		}
 		if (this.timer) return;
-		console.log(`[brain-loop] Starting — cycle every ${this.intervalMs / 1000}s`);
+		console.log(`[work-loop] Starting — cycle every ${this.intervalMs / 1000}s`);
 		this.timer = setInterval(() => this.cycle(), this.intervalMs);
-		this.cycle();
+		if (this.runOnStart) this.cycle();
 	}
 
 	stop(): void {
@@ -263,65 +511,266 @@ export class BrainLoop {
 			clearInterval(this.timer);
 			this.timer = null;
 		}
-		console.log("[brain-loop] Stopped");
+		console.log("[work-loop] Stopped");
 	}
 
-	async runDigest(): Promise<string> {
-		const accounts = await this.source.list();
-		if (accounts.length === 0) return "No customers yet.";
-
-		const summaries = await Promise.all(
-			accounts.map((a) => this.source.buildSummary(a.id, a.companyName)),
-		);
-
-		const prompt = `You are preparing the daily digest for the CSM. Their accounts:
-
-${summaries.join("\n\n---\n\n")}
-
-Produce the headline in exactly this format, filling in real counts from today's ledger:
-"Yesterday: N acts, M notifies in-flight, K escalations need you."
-
-Then list:
-1. Escalations needing the CSM (≤5). Each: customer, situation in one line, your recommendation.
-2. Top notifies in flight (≤5).
-3. What's going well — one line.
-
-Be terse. The CSM scans this in 30 seconds. If you need to take additional action while writing the digest, use the matching action-policy tool (act / notify_then_send_to_customer / escalate / prep). Do not draft messages and wait.`;
-
-		const response = await this.agent.prompt(prompt, undefined, "brain:digest");
-		return response.text;
-	}
-
+	/** Interval-driven cycle: guards against overlap, ignores the summary. */
 	private async cycle(): Promise<void> {
 		if (this.running) {
-			console.log("[brain-loop] Previous cycle still running, skipping");
+			console.log("[work-loop] Previous cycle still running, skipping");
 			return;
 		}
+		await this.runCycle();
+	}
 
+	/**
+	 * Run one full cycle (accounts → tasks → renewals) and return a summary.
+	 * `cap` overrides the per-sweep fan-out for this run: undefined → use the
+	 * configured triageMax; 0 → no cap (work all); N>0 → top-N per sweep.
+	 * Callers MUST ensure no cycle is already running (`this.running`).
+	 */
+	private async runCycle(cap?: number): Promise<CycleSummary> {
+		if (this.running) {
+			throw new Error("[work-loop] runCycle called while a cycle is already running");
+		}
+		const startedAt = Date.now();
 		this.running = true;
-		console.log(`[brain-loop] Cycle starting — source: ${this.source.label}`);
-		await this.emitter?.emit("brain_loop_cycle_start", { ts: Date.now() });
+		console.log(`[work-loop] Cycle starting — source: ${this.source.label}`);
+		await this.emitter?.emit("brain_loop_cycle_start", { ts: startedAt });
+
+		let actionsTaken = 0;
+		let accounts: SweepCount = { evaluated: 0, available: 0 };
+		let tasks: SweepCount = { evaluated: 0, available: 0 };
+		let renewals: SweepCount = { evaluated: 0, available: 0 };
 
 		try {
-			const accounts = await this.source.list();
-			if (accounts.length === 0) {
-				console.log("[brain-loop] No customers from source, nothing to do");
-				return;
+			// 1) Accounts — the change-detection sweep over the CSM's portfolio.
+			const allAccounts = await this.source.list();
+			if (allAccounts.length === 0) {
+				console.log("[work-loop] No customers from source");
 			}
+			let worked: { id: string; companyName: string }[];
+			if (this.source.prepare) {
+				// Cheap pre-review pass: compute signals for every listed account (a
+				// few CSP GETs each, bounded), gate out the unchanged ones, and rank
+				// the rest on REAL triage inputs. The expensive LLM turn is spent
+				// only where something changed.
+				const prepare = this.source.prepare.bind(this.source);
+				const planned = await mapWithConcurrency(
+					allAccounts,
+					PREPARE_CONCURRENCY,
+					async (a) => ({ a, plan: await prepare(a.id, a.companyName) }),
+					(a) => ({ a, plan: null }),
+				);
+				const gateNow = new Date();
+				const eligible: typeof planned = [];
+				let skipped = 0;
+				for (const p of planned) {
+					if (p.plan && this.shouldSkipAccount(p.plan, gateNow)) skipped += 1;
+					else eligible.push(p);
+				}
+				if (skipped > 0) {
+					console.log(
+						`[work-loop] Accounts gate: ${skipped} skipped (no change), ${eligible.length} eligible`,
+					);
+				}
+				worked = this.triageSelect(
+					eligible,
+					(p) => computeTriageScore(p.plan?.triage ?? {}),
+					"Accounts",
+					cap,
+				).map((p) => p.a);
+			} else {
+				worked = this.triageSelect(allAccounts, () => computeTriageScore({}), "Accounts", cap);
+			}
+			actionsTaken += await this.evaluateAll(
+				worked,
+				(a) => this.evaluateCustomer(a.id, a.companyName),
+				"Account",
+			);
+			accounts = { evaluated: worked.length, available: allAccounts.length };
 
-			for (const a of accounts) {
-				await this.evaluateCustomer(a.id, a.companyName);
+			// 2) Tasks — independent of accounts.
+			const taskRes = await this.cycleTasks(cap);
+			tasks = taskRes.summary;
+			actionsTaken += taskRes.actions;
+
+			// 3) Renewals — independent of accounts and tasks.
+			const renewalRes = await this.cycleRenewals(cap);
+			renewals = renewalRes.summary;
+			actionsTaken += renewalRes.actions;
+
+			if (worked.length === 0 && !this.taskSource && !this.renewalSource) {
+				console.log("[work-loop] Nothing to do this cycle");
 			}
 		} catch (err) {
-			console.error("[brain-loop] Cycle error:", err);
+			console.error("[work-loop] Cycle error:", err);
 		} finally {
 			this.running = false;
-			console.log("[brain-loop] Cycle complete");
+			console.log("[work-loop] Cycle complete");
 			await this.emitter?.emit("brain_loop_cycle_end", { ts: Date.now() });
+		}
+
+		return {
+			ran: true,
+			limit: cap ?? this.triageMax,
+			accounts,
+			tasks,
+			renewals,
+			actionsTaken,
+			durationMs: Date.now() - startedAt,
+		};
+	}
+
+	/**
+	 * Iterate the CSM's open tasks and work each one. Tasks that already have an
+	 * open ledger action tagged with their id are skipped (mid-flight dedup) — re-
+	 * actioning them would double-fire. `cap` caps per-cycle fan-out.
+	 */
+	private async cycleTasks(cap?: number): Promise<{ summary: SweepCount; actions: number }> {
+		const empty = { summary: { evaluated: 0, available: 0 }, actions: 0 };
+		if (!this.taskSource) return empty;
+		let tasks: Awaited<ReturnType<TaskSource["listOpen"]>>;
+		try {
+			tasks = await this.taskSource.listOpen();
+		} catch (err) {
+			console.error(`[work-loop] Task list error: ${(err as Error).message}`);
+			return empty;
+		}
+		if (tasks.length === 0) {
+			console.log("[work-loop] No open tasks");
+			return empty;
+		}
+
+		const inFlight = await this.tasksWithOpenActions();
+		const open = tasks.filter((t) => !inFlight.has(t.id));
+		const skipped = tasks.length - open.length;
+		const worked = this.triageSelect(
+			open,
+			(t) => computeTriageScore({ priority: t.priority }),
+			"Tasks",
+			cap,
+		);
+		const actions = await this.evaluateAll(worked, (task) => this.evaluateTask(task), "Task");
+		console.log(`[work-loop] Tasks: ${worked.length} evaluated, ${skipped} skipped (mid-flight)`);
+		// `available` is post-dedup (eligible) tasks, not the raw queue — mid-flight
+		// tasks are intentionally excluded since they can't be worked this cycle.
+		return { summary: { evaluated: worked.length, available: open.length }, actions };
+	}
+
+	/** Task ids that already have an open (in-flight / needs-csm) ledger action. */
+	private async tasksWithOpenActions(): Promise<Set<string>> {
+		const ids = new Set<string>();
+		if (!this.ledger) return ids;
+		try {
+			for (const entry of await this.ledger.listOpen()) {
+				const taskId = (entry.payload as { taskId?: unknown } | undefined)?.taskId;
+				if (typeof taskId === "string") ids.add(taskId);
+			}
+		} catch (err) {
+			console.error(`[work-loop] Ledger dedup scan failed: ${(err as Error).message}`);
+		}
+		return ids;
+	}
+
+	private async evaluateTask(task: { id: string; title: string }): Promise<number> {
+		const full = (await this.taskSource?.getContext(task.id)) ?? null;
+		const context = full
+			? renderTaskContext(full)
+			: `# Cerebro task\n- ${task.title} (id: ${task.id})`;
+
+		const prompt = `You have a task to work from the CSM's Cerebro queue.
+
+${context}
+
+${TASK_GUIDANCE}`;
+
+		try {
+			const response = await this.agent.prompt(prompt, undefined, `brain:task:${task.id}`);
+			if (response.toolCalls.length > 0) {
+				console.log(`[work-loop] task ${task.id}: ${response.toolCalls.length} actions taken`);
+			}
+			return response.toolCalls.length;
+		} catch (err) {
+			const detail = err instanceof Error ? err.message : String(err);
+			console.error(`[work-loop] Error evaluating task ${task.id}: ${detail}`);
+			return 0;
 		}
 	}
 
-	private async evaluateCustomer(customerId: string, companyName: string): Promise<void> {
+	/**
+	 * Renewal sweep — iterate the CSM's open (upcoming/at-risk) renewals and work
+	 * each on its timeline, independent of the account and task sweeps. `cap` caps
+	 * per-cycle fan-out.
+	 */
+	private async cycleRenewals(cap?: number): Promise<{ summary: SweepCount; actions: number }> {
+		const empty = { summary: { evaluated: 0, available: 0 }, actions: 0 };
+		if (!this.renewalSource) return empty;
+		let renewals: Awaited<ReturnType<RenewalSource["listOpen"]>>;
+		try {
+			renewals = await this.renewalSource.listOpen();
+		} catch (err) {
+			console.error(`[work-loop] Renewal list error: ${(err as Error).message}`);
+			return empty;
+		}
+		if (renewals.length === 0) {
+			console.log("[work-loop] No open renewals");
+			return empty;
+		}
+		const worked = this.triageSelect(
+			renewals,
+			(r) =>
+				computeTriageScore({
+					atRisk: r.atRisk,
+					daysToRenewal: r.daysToRenewal,
+					contractValue: r.arr,
+				}),
+			"Renewals",
+			cap,
+		);
+		const actions = await this.evaluateAll(
+			worked,
+			(renewal) => this.evaluateRenewal(renewal.id),
+			"Renewal",
+		);
+		console.log(`[work-loop] Renewals: ${worked.length} evaluated`);
+		return { summary: { evaluated: worked.length, available: renewals.length }, actions };
+	}
+
+	private async evaluateRenewal(id: string): Promise<number> {
+		const full = (await this.renewalSource?.getContext(id)) ?? null;
+		if (!full) {
+			console.error(`[work-loop] Renewal ${id} has no context — skipping`);
+			return 0;
+		}
+		const renewalContext = renderRenewalContext(full);
+		const situations = this.situationStore
+			? await this.situationStore.listOpen(full.businessId)
+			: [];
+		const situationBlock = renderSituations(situations, new Date());
+
+		const prompt = `You have a renewal to work from the CSM's portfolio.
+
+${renewalContext}
+
+${situationBlock}
+
+${RENEWAL_GUIDANCE}`;
+
+		try {
+			const response = await this.agent.prompt(prompt, undefined, `brain:renewal:${id}`);
+			if (response.toolCalls.length > 0) {
+				console.log(`[work-loop] renewal ${id}: ${response.toolCalls.length} actions taken`);
+			}
+			return response.toolCalls.length;
+		} catch (err) {
+			const detail = err instanceof Error ? err.message : String(err);
+			console.error(`[work-loop] Error evaluating renewal ${id}: ${detail}`);
+			return 0;
+		}
+	}
+
+	private async evaluateCustomer(customerId: string, companyName: string): Promise<number> {
 		const summary = await this.source.buildSummary(customerId, companyName);
 
 		const prompt = `You are reviewing customer "${companyName}". Decide if any action is needed right now.
@@ -335,13 +784,15 @@ If nothing needs doing, say "No action needed for ${companyName}." and move on.`
 		try {
 			const response = await this.agent.prompt(prompt, undefined, `brain:${customerId}`);
 			if (response.toolCalls.length > 0) {
-				console.log(`[brain-loop] ${companyName}: ${response.toolCalls.length} actions taken`);
+				console.log(`[work-loop] ${companyName}: ${response.toolCalls.length} actions taken`);
 			}
+			return response.toolCalls.length;
 		} catch (err) {
-			console.error(`[brain-loop] Error evaluating ${companyName}: ${friendlyAnthropicError(err)}`);
+			const detail = err instanceof Error ? err.message : String(err);
+			console.error(`[work-loop] Error evaluating ${companyName}: ${detail}`);
+			return 0;
 		} finally {
-			// Persist this cycle's signal snapshot exactly once, after the review —
-			// never from buildSummary (which also runs in runDigest).
+			// Persist this cycle's signal snapshot exactly once, after the review.
 			await this.source.onEvaluated?.(customerId);
 		}
 	}

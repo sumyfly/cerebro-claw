@@ -3,7 +3,54 @@ import type {
 	ActionLedgerEntry,
 	CustomerChannel,
 	ToolDefinition,
+	ToolParameterProperty,
+	VerificationInput,
+	VerificationResult,
 } from "@cerebro-claw/shared";
+
+/** Optional link fields shared by every action tool so ledger entries join a Situation storyline. */
+const SITUATION_LINK_PROPS: Record<string, ToolParameterProperty> = {
+	situation_id: {
+		type: "string",
+		description: "Link this action to an open Situation (its id) so it joins that storyline.",
+	},
+	renewal_id: {
+		type: "string",
+		description: "Renewal UUID this action concerns, when renewal-scoped (the CTA join).",
+	},
+};
+
+function situationLink(params: Record<string, unknown>): {
+	situationId?: string;
+	renewalId?: string;
+} {
+	return {
+		situationId: (params.situation_id as string) ?? undefined,
+		renewalId: (params.renewal_id as string) ?? undefined,
+	};
+}
+
+/** Kinds of real effects an Act can point at. */
+const EVIDENCE_KINDS = ["note", "activity", "renewal", "other"] as const;
+
+export interface ActEvidence {
+	kind: (typeof EVIDENCE_KINDS)[number];
+	id: string;
+}
+
+/**
+ * Parse the `evidence` param into a validated reference, or null. An Act must
+ * point at a real effect (the CSP note id, activity id, renewal id, or another
+ * verifiable artifact id) — the ledger records deeds, not narration.
+ */
+function parseEvidence(value: unknown): ActEvidence | null {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+	const e = value as Record<string, unknown>;
+	const kind = String(e.kind ?? "");
+	const id = String(e.id ?? "").trim();
+	if (!EVIDENCE_KINDS.includes(kind as ActEvidence["kind"]) || !id) return null;
+	return { kind: kind as ActEvidence["kind"], id };
+}
 
 /**
  * Context the action-policy tools need.
@@ -32,6 +79,14 @@ export interface ActionPolicyToolsContext {
 	resolveOverride?: (
 		customerId: string,
 	) => Promise<{ forcesBand?: string } | null> | { forcesBand?: string } | null;
+	/**
+	 * Critic that verifies a high-stakes action before it commits. When it
+	 * returns pass=false the action is blocked (recorded as failed). Absent =
+	 * verification disabled. See `verifyBands` for which bands are gated.
+	 */
+	verify?: (input: VerificationInput) => Promise<VerificationResult>;
+	/** Bands gated by `verify`. Default: notify-then-act + escalate. */
+	verifyBands?: string[];
 }
 
 /** Band severity, low → high. An override forcing a higher band blocks lower ones. */
@@ -80,10 +135,59 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 		};
 	}
 
+	const verifyBands = new Set(ctx.verifyBands ?? ["notify-then-act", "escalate"]);
+
+	/**
+	 * Critic gate. For a band in `verifyBands`, run the verifier; if it fails,
+	 * record the blocked attempt (a `failed` ledger entry carrying the critic's
+	 * reason) and return a failure ToolResult so the action does NOT proceed.
+	 * Returns null when allowed (verification off, band not gated, or passed).
+	 */
+	async function verifyGate(
+		band: string,
+		params: Record<string, unknown>,
+		summary: string,
+		reason: string,
+	) {
+		if (!ctx.verify || !verifyBands.has(band)) return null;
+		const result = await ctx.verify({
+			band,
+			customerId: params.customer_id as string,
+			customerName: (params.customer_name as string) ?? undefined,
+			summary,
+			reason,
+			payload: params as Record<string, unknown>,
+		});
+		if (result.pass) return null;
+		const entry = await ctx.ledger.record({
+			band: band as ActionLedgerEntry["band"],
+			customerId: params.customer_id as string,
+			customerName: (params.customer_name as string) ?? undefined,
+			summary,
+			reason,
+			status: "failed",
+			createdAt: now(),
+			note: `Blocked by verifier: ${result.reason}`,
+			...situationLink(params),
+		});
+		return {
+			content: `Blocked by verifier (#${entry.id.slice(0, 8)}): ${result.reason}${
+				result.suggestedBand ? ` — consider ${result.suggestedBand} instead` : ""
+			}`,
+			success: false,
+			details: {
+				blockedBy: "verifier",
+				reason: result.reason,
+				suggestedBand: result.suggestedBand,
+				actionId: entry.id,
+			},
+		};
+	}
+
 	const act: ToolDefinition = {
 		name: "act",
 		description:
-			"Record an autonomous action the agent has already taken (Act band): an internal note logged, an instinct captured, a detection performed, an internal ping sent. Use this whenever you do something reversible, low-stakes, and fact-based without needing CSM approval. Increments the daily Act counter in the digest.",
+			"Record an autonomous action the agent has already taken (Act band), citing evidence of the real effect (the artifact id). NOTE: CSP writes (csp_create_note, csp_update_renewal) are recorded in the ledger AUTOMATICALLY — do NOT also call act for those. Use act only for other verifiable work (e.g. an instinct captured via memory_instinct — cite its id). Reversible, low-stakes, fact-based work only. Increments the daily Act counter in the digest.",
 		parameters: {
 			type: "object",
 			properties: {
@@ -97,12 +201,42 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 					type: "string",
 					description: "Why this action was warranted (signal + judgment)",
 				},
+				evidence: {
+					type: "object",
+					description:
+						'Reference to the real effect behind this act: {kind: "note"|"activity"|"renewal"|"other", id: "<object id>"} — e.g. the CSP note id returned by csp_create_note, the renewal UUID you updated, or the instinct/memory id you wrote.',
+				},
+				...SITUATION_LINK_PROPS,
 			},
-			required: ["customer_id", "summary", "reason"],
+			required: ["customer_id", "summary", "reason", "evidence"],
 		},
 		async execute(params) {
 			const blocked = await overrideBlock(params.customer_id as string, "act");
 			if (blocked) return blocked;
+			const evidence = parseEvidence(params.evidence);
+			if (!evidence) {
+				return {
+					content:
+						"Act refused: no evidence of a real effect. Do the actual work first (e.g. memory_instinct — it returns the instinct id), then call act with evidence {kind, id} referencing what you created. CSP notes and renewal updates are recorded automatically — don't call act for those at all. If there is nothing to point at, this is not an Act — say no action is needed, or use prep/escalate.",
+					success: false,
+					details: { blockedBy: "missing-evidence" },
+				};
+			}
+			// Dedup by evidence: if a ledger entry already cites this artifact
+			// (e.g. the observer auto-recorded the CSP write), don't add a second —
+			// one deed must count once in the digest, regardless of call order.
+			const recent = await ctx.ledger.listRecentByCustomer(params.customer_id as string, 20);
+			const already = recent.find(
+				(e) =>
+					(e.payload as { evidence?: { id?: string } } | undefined)?.evidence?.id === evidence.id,
+			);
+			if (already) {
+				return {
+					content: `Already recorded (#${already.id.slice(0, 8)}): an entry citing evidence ${evidence.id} exists — not double-counting. Nothing more to do.`,
+					success: true,
+					details: { actionId: already.id, deduped: true },
+				};
+			}
 			const ts = now();
 			const entry = await ctx.ledger.record({
 				band: "act",
@@ -113,6 +247,8 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 				status: "done",
 				createdAt: ts,
 				executedAt: ts,
+				payload: { evidence },
+				...situationLink(params),
 			});
 			return {
 				content: `Act logged (#${entry.id.slice(0, 8)}): ${entry.summary}`,
@@ -154,6 +290,7 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 					type: "string",
 					description: "Override the CSM channel recipient (defaults to DEFAULT_CSM_LARK_USER_ID)",
 				},
+				...SITUATION_LINK_PROPS,
 			},
 			required: ["customer_id", "recipient", "text", "reason"],
 		},
@@ -161,6 +298,38 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 			const blocked = await overrideBlock(params.customer_id as string, "notify-then-act");
 			if (blocked) return blocked;
 			const customerName = (params.customer_name as string) ?? (params.customer_id as string);
+			// Dedup gate — one in-flight customer touch per customer.
+			const findOpenNotify = async () => {
+				const openEntries = await ctx.ledger.listOpen();
+				return openEntries.find(
+					(e) =>
+						e.band === "notify-then-act" &&
+						e.status === "in-flight" &&
+						e.customerId === (params.customer_id as string),
+				);
+			};
+			const dedupRefusal = (dup: ActionLedgerEntry) => ({
+				content: `Notify refused: ${customerName} already has an in-flight send (#${dup.id.slice(0, 8)}${dup.executeAt ? `, dispatches ${dup.executeAt.toISOString()}` : ""}): "${dup.summary}". If this new touch supersedes it, cancel first with cancel_pending_action ${dup.id} — otherwise let the pending send run.`,
+				success: false,
+				details: { blockedBy: "dedup", openActionId: dup.id },
+			});
+			// First check before the critic so a duplicate never costs a verifier turn.
+			const dup = await findOpenNotify();
+			if (dup) return dedupRefusal(dup);
+			// Critic gate — verify the send follows from its justification before scheduling.
+			const refused = await verifyGate(
+				"notify-then-act",
+				params,
+				`Send to ${customerName}: ${(params.text as string).slice(0, 100)}`,
+				params.reason as string,
+			);
+			if (refused) return refused;
+			// Re-check AFTER the critic: the verify turn takes seconds, and a
+			// concurrent agent turn for the same customer (parallel sweep subjects)
+			// may have recorded a send in that window. The re-check → record path
+			// has no further awaits between them, so it cannot interleave.
+			const lateDup = await findOpenNotify();
+			if (lateDup) return dedupRefusal(lateDup);
 			const rawPause = params.pause_minutes as number | undefined;
 			const pauseMin = Math.min(
 				1440,
@@ -188,6 +357,7 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 					text: params.text,
 					channel: (params.channel as string) === "call" ? "call" : "message",
 				},
+				...situationLink(params),
 			});
 
 			// Heads-up to the CSM — they have `pauseMin` minutes to cancel.
@@ -245,11 +415,20 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 					type: "string",
 					description: "Override the CSM channel recipient",
 				},
+				...SITUATION_LINK_PROPS,
 			},
 			required: ["customer_id", "situation", "options", "recommendation"],
 		},
 		async execute(params) {
 			const customerName = (params.customer_name as string) ?? (params.customer_id as string);
+			// Critic gate — verify the escalation is warranted before briefing the CSM.
+			const refused = await verifyGate(
+				"escalate",
+				params,
+				`Escalation: ${customerName} — needs CSM decision`,
+				params.situation as string,
+			);
+			if (refused) return refused;
 			const brief = [
 				`⚠️ Escalation: ${customerName}`,
 				"",
@@ -277,6 +456,7 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 					recommendation: params.recommendation,
 					urgency: params.urgency,
 				},
+				...situationLink(params),
 			});
 
 			try {
@@ -319,6 +499,7 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 					type: "string",
 					description: "Override the CSM channel recipient",
 				},
+				...SITUATION_LINK_PROPS,
 			},
 			required: ["customer_id", "artifact_type", "body"],
 		},
@@ -342,6 +523,7 @@ export function createActionPolicyTools(ctx: ActionPolicyToolsContext): ToolDefi
 					artifactType: params.artifact_type,
 					body: params.body,
 				},
+				...situationLink(params),
 			});
 
 			try {

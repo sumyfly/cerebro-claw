@@ -19,7 +19,7 @@ agent-browser install   # downloads Chrome 149 for testing (~170 MB)
 
 ```bash
 rm -f ~/.cerebro-claw/data.db     # start clean (agent ledger/memory only)
-pnpm turbo dev                    # server :3000, web :5173
+pnpm turbo dev                    # server :5100, web :5173
 ```
 
 The Customers tab reads live from CSP when `CSP_TOKEN` + `CSP_CSM_EMAIL` are set.

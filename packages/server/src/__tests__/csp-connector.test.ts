@@ -19,6 +19,7 @@ function makeApi(env: Record<string, string> = {}): {
 		extensionId: "csp-connector",
 		registerTool: (t) => tools.set(t.name, t),
 		registerChannel: () => undefined,
+		registerBand: () => undefined,
 		on: () => undefined,
 		getStore: () => ({}) as never,
 		getConfig: () => ({}),
@@ -44,10 +45,10 @@ describe("csp-connector", () => {
 		process.env = { ...originalEnv };
 	});
 
-	it("registers all 9 tools", async () => {
+	it("registers all 10 tools", async () => {
 		const { api, tools } = makeApi();
 		await cspExtension.factory(api);
-		expect(tools.size).toBe(9);
+		expect(tools.size).toBe(10);
 		expect(tools.has("csp_list_my_accounts")).toBe(true);
 		expect(tools.has("csp_get_account")).toBe(true);
 		expect(tools.has("csp_get_health_score")).toBe(true);
@@ -57,6 +58,7 @@ describe("csp-connector", () => {
 		expect(tools.has("csp_delete_note")).toBe(true);
 		expect(tools.has("csp_get_renewals")).toBe(true);
 		expect(tools.has("csp_get_renewal")).toBe(true);
+		expect(tools.has("csp_update_renewal")).toBe(true);
 	});
 
 	it("returns a clear error when CSP_TOKEN is not configured", async () => {
@@ -355,12 +357,85 @@ describe("csp-connector", () => {
 		await tools.get("csp_delete_note")!.execute({ note_id: VALID_UUID });
 		await tools.get("csp_get_renewals")!.execute({ business_id: VALID_ID });
 		await tools.get("csp_get_renewal")!.execute({ renewal_id: VALID_UUID });
+		await tools.get("csp_update_renewal")!.execute({ renewal_id: VALID_UUID, status: "WON" });
 
 		for (const call of fetchMock.mock.calls) {
 			const url = call[0] as string;
 			expect(url, `URL should include /api/v1: ${url}`).toContain("/api/v1/");
 		}
-		expect(fetchMock).toHaveBeenCalledTimes(9);
+		expect(fetchMock).toHaveBeenCalledTimes(10);
+	});
+
+	it("csp_update_renewal POSTs status/playbook to /renewals/:id/update", async () => {
+		const fetchMock = vi.fn(async () => ({
+			ok: true,
+			status: 200,
+			text: async () => JSON.stringify({ success: true, data: { id: VALID_UUID, status: "WON" } }),
+		}));
+		globalThis.fetch = fetchMock as never;
+
+		const { api, tools } = makeApi({ CSP_TOKEN: "tok", CSP_BASE_URL: "http://csp.test" });
+		await cspExtension.factory(api);
+		const result = await tools.get("csp_update_renewal")!.execute({
+			renewal_id: VALID_UUID,
+			status: "WON",
+			playbook_stage: "CLOSED",
+			note: "Renewed at list.",
+		});
+
+		expect(result.success).toBe(true);
+		expect(result.content).toContain("updated in CSP");
+		const call = fetchMock.mock.calls[0];
+		expect(call[0]).toBe(`http://csp.test/api/v1/renewals/${VALID_UUID}/update`);
+		const init = call[1] as RequestInit;
+		expect(init.method).toBe("POST");
+		const body = JSON.parse(init.body as string);
+		expect(body.status).toBe("WON");
+		expect(body.playbookStage).toBe("CLOSED");
+		expect(body.note).toBe("Renewed at list.");
+	});
+
+	it("csp_update_renewal rejects a non-UUID id before any fetch", async () => {
+		const fetchMock = vi.fn(async () => ({ ok: true, status: 200, text: async () => "{}" }));
+		globalThis.fetch = fetchMock as never;
+
+		const { api, tools } = makeApi({ CSP_TOKEN: "tok", CSP_BASE_URL: "http://csp.test" });
+		await cspExtension.factory(api);
+		const result = await tools
+			.get("csp_update_renewal")!
+			.execute({ renewal_id: "not-a-uuid", status: "WON" });
+
+		expect(result.success).toBe(false);
+		expect(result.content).toContain("Invalid renewal_id");
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it("csp_update_renewal requires at least one field to change", async () => {
+		const { api, tools } = makeApi({ CSP_TOKEN: "tok", CSP_BASE_URL: "http://csp.test" });
+		await cspExtension.factory(api);
+		const result = await tools.get("csp_update_renewal")!.execute({ renewal_id: VALID_UUID });
+		expect(result.success).toBe(false);
+		expect(result.content).toContain("Nothing to update");
+	});
+
+	it("csp_update_renewal surfaces a rejected transition with fallback guidance", async () => {
+		const fetchMock = vi.fn(async () => ({
+			ok: false,
+			status: 403,
+			text: async () => JSON.stringify({ error: "transition not permitted" }),
+		}));
+		globalThis.fetch = fetchMock as never;
+
+		const { api, tools } = makeApi({ CSP_TOKEN: "tok", CSP_BASE_URL: "http://csp.test" });
+		await cspExtension.factory(api);
+		const result = await tools
+			.get("csp_update_renewal")!
+			.execute({ renewal_id: VALID_UUID, status: "WON" });
+
+		expect(result.success).toBe(false);
+		expect(result.content).toContain("CSP rejected the renewal update (403)");
+		expect(result.content).toContain("csp_create_note");
+		expect(result.content).toContain("escalate");
 	});
 
 	it("csp_delete_note POSTs to /notes/:id/delete and rejects non-UUID ids", async () => {

@@ -19,6 +19,7 @@
  *   - csp_delete_note          (write-back)
  *   - csp_get_renewals
  *   - csp_get_renewal
+ *   - csp_update_renewal       (write-back)
  */
 
 import type { Extension } from "@cerebro-claw/shared";
@@ -434,6 +435,70 @@ const extension: Extension = {
 					};
 				}
 				return { content: JSON.stringify(res.body, null, 2), success: true };
+			},
+		});
+
+		api.registerTool({
+			name: "csp_update_renewal",
+			description:
+				"Advance a renewal in CSP (write-back): update its status and/or playbook stage. Use this to move a renewal forward as part of the action policy — pair it with the right band: a routine status note is an Act; a customer nudge goes through notify_then_send_to_customer; a discount/contract change is an Escalate (don't self-approve commercial terms). IMPORTANT: if CSP rejects the update (transition not permitted for your role), do NOT force it — fall back to csp_create_note to record the intent and/or escalate so the CSM can act. Report what you could and could not change.",
+			parameters: {
+				type: "object",
+				properties: {
+					renewal_id: {
+						type: "string",
+						description: "The CSP renewal id (UUID, 36 chars with dashes).",
+					},
+					status: {
+						type: "string",
+						description: "Optional new renewal status (e.g. IN_PROGRESS, AT_RISK, WON, LOST).",
+					},
+					playbook_stage: {
+						type: "string",
+						description: "Optional playbook stage to advance the renewal to.",
+					},
+					note: {
+						type: "string",
+						description: "Optional short note recorded with the update (why you advanced it).",
+					},
+				},
+				required: ["renewal_id"],
+			},
+			async execute(params) {
+				const id = String(params.renewal_id);
+				if (!UUID_RE.test(id)) {
+					return {
+						content: `Invalid renewal_id (expected UUID): ${id}`,
+						success: false,
+					};
+				}
+				const body: Record<string, unknown> = {};
+				if (params.status) body.status = String(params.status);
+				if (params.playbook_stage) body.playbookStage = String(params.playbook_stage);
+				if (params.note) body.note = String(params.note);
+				if (Object.keys(body).length === 0) {
+					return {
+						content: "Nothing to update — provide at least one of status, playbook_stage, note.",
+						success: false,
+					};
+				}
+
+				// CSP renewal mutation endpoint. The exact path/permitted transitions are
+				// confirmed as part of the task-backend open question (design.md); this is
+				// the write-back seam — the agent guidance above handles a rejection.
+				const res = await transport.post(`/renewals/${id}/update`, body);
+				if (!res.ok) {
+					return {
+						content: `CSP rejected the renewal update (${res.status}): ${JSON.stringify(res.body)}. Fall back to csp_create_note and/or escalate — do not force the transition.`,
+						success: false,
+						details: { status: res.status, renewalId: id },
+					};
+				}
+				return {
+					content: `Renewal ${id} updated in CSP. ${JSON.stringify(res.body)}`,
+					success: true,
+					details: { renewalId: id },
+				};
 			},
 		});
 	},

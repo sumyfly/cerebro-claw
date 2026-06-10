@@ -1,6 +1,4 @@
 export { createMemoryTools } from "./memory-tools.js";
-export { createMessageTools } from "./message-tools.js";
-export type { MessageToolsContext } from "./message-tools.js";
 export { createBashTool, DEFAULT_ALLOWLIST } from "./bash-tool.js";
 export type { BashToolOptions } from "./bash-tool.js";
 export {
@@ -13,3 +11,12 @@ export { createActionPolicyTools } from "./action-policy-tools.js";
 export type { ActionPolicyToolsContext } from "./action-policy-tools.js";
 export { StubCsmChannel } from "./stub-csm-channel.js";
 export type { CsmInboxEntry } from "./stub-csm-channel.js";
+export { StubTaskSource } from "./stub-task-source.js";
+export type { StubTaskSourceOptions } from "./stub-task-source.js";
+export { createTaskTools } from "./task-tools.js";
+export type { TaskToolsContext } from "./task-tools.js";
+export { createSituationTools } from "./situation-tools.js";
+export type { SituationToolsContext } from "./situation-tools.js";
+export { StubRenewalSource } from "./stub-renewal-source.js";
+export type { StubRenewalSourceOptions } from "./stub-renewal-source.js";
+export { createNoopVerifier } from "./noop-verifier.js";

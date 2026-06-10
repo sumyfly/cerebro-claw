@@ -46,12 +46,13 @@ describe("action-policy tools", () => {
 	});
 
 	describe("act", () => {
-		it("records a done entry without notifying the CSM", async () => {
+		it("records a done entry with evidence, without notifying the CSM", async () => {
 			const res = await tools.get("act")!.execute({
 				customer_id: "biz-1",
 				customer_name: "Acme",
 				summary: "Created CSP note about usage drop",
 				reason: "Engagement down 35%",
+				evidence: { kind: "note", id: "note-123" },
 			});
 			expect(res.success).toBe(true);
 			const open = await ledger.listOpen();
@@ -63,7 +64,68 @@ describe("action-policy tools", () => {
 			expect(window).toHaveLength(1);
 			expect(window[0].band).toBe("act");
 			expect(window[0].status).toBe("done");
+			expect(window[0].payload).toMatchObject({ evidence: { kind: "note", id: "note-123" } });
 			expect(sendToCsm).not.toHaveBeenCalled();
+		});
+
+		it("refuses an act with no evidence — the ledger records deeds, not narration", async () => {
+			const res = await tools.get("act")!.execute({
+				customer_id: "biz-1",
+				summary: "Pinged the product team",
+				reason: "Bug report",
+			});
+			expect(res.success).toBe(false);
+			expect(res.details?.blockedBy).toBe("missing-evidence");
+			expect(
+				await ledger.listByWindow(
+					new Date("2026-05-29T00:00:00Z"),
+					new Date("2026-05-30T00:00:00Z"),
+				),
+			).toHaveLength(0);
+		});
+
+		it("does not double-count when an entry already cites the same evidence (observer auto-record)", async () => {
+			// Simulate the action-observer having auto-recorded the CSP write.
+			await ledger.record({
+				band: "act",
+				customerId: "biz-1",
+				summary: "Logged a CSP note",
+				reason: "csp_create_note (observed)",
+				status: "done",
+				createdAt: fixedNow,
+				executedAt: fixedNow,
+				payload: { evidence: { kind: "note", id: "note-dup-1" } },
+			});
+			const res = await tools.get("act")!.execute({
+				customer_id: "biz-1",
+				summary: "Logged usage-drop note",
+				reason: "usage down",
+				evidence: { kind: "note", id: "note-dup-1" },
+			});
+			expect(res.success).toBe(true);
+			expect(res.details?.deduped).toBe(true);
+			const window = await ledger.listByWindow(
+				new Date("2026-05-29T00:00:00Z"),
+				new Date("2026-05-30T00:00:00Z"),
+			);
+			expect(window).toHaveLength(1); // one deed, one entry
+		});
+
+		it("refuses malformed evidence (unknown kind or empty id)", async () => {
+			const badKind = await tools.get("act")!.execute({
+				customer_id: "biz-1",
+				summary: "x",
+				reason: "y",
+				evidence: { kind: "vibes", id: "z" },
+			});
+			expect(badKind.success).toBe(false);
+			const emptyId = await tools.get("act")!.execute({
+				customer_id: "biz-1",
+				summary: "x",
+				reason: "y",
+				evidence: { kind: "note", id: "  " },
+			});
+			expect(emptyId.success).toBe(false);
 		});
 	});
 
@@ -137,6 +199,87 @@ describe("action-policy tools", () => {
 			expect(window).toHaveLength(1);
 			expect(window[0].status).toBe("failed");
 			expect(window[0].note).toContain("Lark down");
+		});
+
+		it("refuses a second notify while one is in-flight for the same customer (dedup)", async () => {
+			const first = await tools.get("notify_then_send_to_customer")!.execute({
+				customer_id: "biz-1",
+				customer_name: "Acme",
+				recipient: "alice@acme.com",
+				text: "first touch",
+				reason: "30d silent",
+			});
+			expect(first.success).toBe(true);
+			const second = await tools.get("notify_then_send_to_customer")!.execute({
+				customer_id: "biz-1",
+				customer_name: "Acme",
+				recipient: "alice@acme.com",
+				text: "second touch",
+				reason: "still silent",
+			});
+			expect(second.success).toBe(false);
+			expect(second.details?.blockedBy).toBe("dedup");
+			expect(second.details?.openActionId).toBe(first.details?.actionId);
+			expect(second.content).toContain("cancel_pending_action");
+			expect(await ledger.listOpen()).toHaveLength(1);
+		});
+
+		it("allows a new notify for a different customer while one is in-flight", async () => {
+			await tools.get("notify_then_send_to_customer")!.execute({
+				customer_id: "biz-1",
+				recipient: "a@acme.com",
+				text: "x",
+				reason: "y",
+			});
+			const other = await tools.get("notify_then_send_to_customer")!.execute({
+				customer_id: "biz-2",
+				recipient: "b@globex.com",
+				text: "x",
+				reason: "y",
+			});
+			expect(other.success).toBe(true);
+			expect(await ledger.listOpen()).toHaveLength(2);
+		});
+
+		it("allows a new notify after the prior one reaches a terminal status", async () => {
+			const first = await tools.get("notify_then_send_to_customer")!.execute({
+				customer_id: "biz-1",
+				recipient: "a@acme.com",
+				text: "x",
+				reason: "y",
+			});
+			await ledger.update(first.details!.actionId as string, {
+				status: "executed",
+				executedAt: fixedNow,
+			});
+			const second = await tools.get("notify_then_send_to_customer")!.execute({
+				customer_id: "biz-1",
+				recipient: "a@acme.com",
+				text: "follow-up",
+				reason: "z",
+			});
+			expect(second.success).toBe(true);
+		});
+
+		it("allows a superseding notify after the agent cancels the open one", async () => {
+			const first = await tools.get("notify_then_send_to_customer")!.execute({
+				customer_id: "biz-1",
+				recipient: "a@acme.com",
+				text: "x",
+				reason: "y",
+			});
+			const cancelled = await tools.get("cancel_pending_action")!.execute({
+				action_id: first.details!.actionId as string,
+				reason: "superseded by a better touch",
+			});
+			expect(cancelled.success).toBe(true);
+			const second = await tools.get("notify_then_send_to_customer")!.execute({
+				customer_id: "biz-1",
+				recipient: "a@acme.com",
+				text: "better touch",
+				reason: "z",
+			});
+			expect(second.success).toBe(true);
 		});
 
 		it("falls back to the stub CSM recipient when none is configured (graceful degrade)", async () => {
@@ -232,6 +375,7 @@ describe("action-policy tools", () => {
 				customer_id: "biz-1",
 				summary: "did x",
 				reason: "y",
+				evidence: { kind: "note", id: "note-1" },
 			});
 			const id = created.details!.actionId as string;
 			const res = await tools.get("cancel_pending_action")!.execute({
@@ -292,6 +436,7 @@ describe("action-policy tools", () => {
 				customer_id: "acme",
 				summary: "logged a note",
 				reason: "usage dip",
+				evidence: { kind: "note", id: "note-1" },
 			});
 			expect(res.success).toBe(false);
 			expect(res.content).toContain('requires the "escalate" band');
@@ -340,6 +485,7 @@ describe("action-policy tools", () => {
 				customer_id: "globex",
 				summary: "logged a note",
 				reason: "fyi",
+				evidence: { kind: "note", id: "note-1" },
 			});
 			expect(res.success).toBe(true);
 		});
@@ -351,6 +497,7 @@ describe("action-policy tools", () => {
 				customer_id: "acme",
 				summary: "note",
 				reason: "fyi",
+				evidence: { kind: "note", id: "note-1" },
 			});
 			expect(res.success).toBe(true);
 		});

@@ -1,3 +1,4 @@
+import type { ActionLedgerEntry, Situation } from "@cerebro-claw/shared";
 import type { DecisionSignals } from "./signals.js";
 
 /**
@@ -62,5 +63,53 @@ export function renderDecisionContext(signals: DecisionSignals, instincts: strin
 		for (const note of instincts) lines.push(`- ${note}`);
 	}
 
+	return lines.join("\n");
+}
+
+/**
+ * Render the account's recent ledger entries so the agent observes the
+ * outcomes of its own past actions (the closed loop): chase a send that got no
+ * response, retry or escalate a failure, and never repeat an in-flight touch.
+ */
+export function renderRecentActions(entries: ActionLedgerEntry[], now: Date): string {
+	if (entries.length === 0) return "";
+	const lines = [
+		"# Recent agent actions on this account (your own past work — newest first)",
+		"Use these to follow through: chase a send with no response, address failures, and do NOT repeat work already done or in flight.",
+	];
+	for (const e of entries) {
+		const ageDays = Math.max(0, Math.floor((now.getTime() - e.createdAt.getTime()) / 86_400_000));
+		const age = ageDays === 0 ? "today" : `${ageDays}d ago`;
+		const failure = e.status === "failed" && e.note ? ` — FAILED: ${e.note}` : "";
+		lines.push(`- [${e.band}/${e.status}] ${age}: ${e.summary}${failure}`);
+	}
+	return lines.join("\n");
+}
+
+/**
+ * Render the account's open Situations (storylines already in flight) so the
+ * agent advances/resolves them instead of re-discovering the same thing. A
+ * `watching` situation whose checkpoint hasn't passed is an explicit "leave it"
+ * signal — this is the no-re-discovery mechanic, surfaced to the agent.
+ */
+export function renderSituations(situations: Situation[], now: Date): string {
+	if (situations.length === 0) {
+		return '# Open situations\n- none. If you start tracking something (e.g. "watching a renewal"), open a Situation with situation_open — do NOT log it as an `act`.';
+	}
+	const lines = [
+		"# Open situations — ALREADY in flight. Advance/resolve these; do NOT open a duplicate or re-log them as an `act`.",
+	];
+	for (const s of situations) {
+		const checkpoint = s.nextCheckpoint
+			? s.nextCheckpoint > now
+				? ` — checkpoint ${s.nextCheckpoint.toISOString().slice(0, 10)} not yet due: leave unchanged unless signals materially changed`
+				: " — checkpoint DUE: re-evaluate and advance or resolve now"
+			: "";
+		lines.push(
+			`- #${s.id.slice(0, 8)} ${s.kind}/${s.status}: ${s.title}${
+				s.waitingFor ? ` (waiting: ${s.waitingFor})` : ""
+			}${checkpoint}`,
+		);
+	}
 	return lines.join("\n");
 }

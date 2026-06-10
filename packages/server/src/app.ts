@@ -1,35 +1,44 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { verifyLarkSignature } from "@cerebro-claw/channel-lark";
-import { SqliteActionLedger, SqliteStore } from "@cerebro-claw/memory";
+import { SqliteActionLedger, SqliteSituationStore, SqliteStore } from "@cerebro-claw/memory";
 import type {
 	ActionLedger,
 	CustomerChannel,
 	MemoryStore,
-	PendingAction,
+	RenewalSource,
+	SituationStore,
+	TaskSource,
+	Verifier,
 } from "@cerebro-claw/shared";
-import { StubCustomerChannel } from "@cerebro-claw/tools";
-import express, { type Express } from "express";
+import { StubCustomerChannel, StubRenewalSource, StubTaskSource } from "@cerebro-claw/tools";
+import express, { type Express, type Request, type Response } from "express";
 import { createActionObserver } from "./action-observer.js";
-import { type AgentBackend, AgentRuntime } from "./agent-runtime.js";
+import type { AgentBackend } from "./agent-backend.js";
 import { createAdminAuth } from "./auth.js";
 import { BrainLoop, createCspAccountSource } from "./brain-loop.js";
 import { createActionPolicyExtension } from "./builtin-extensions/action-policy-extension.js";
 import { createBashToolExtension } from "./builtin-extensions/bash-tool-extension.js";
 import { createLarkExtension } from "./builtin-extensions/lark-extension.js";
 import { memoryToolsExtension } from "./builtin-extensions/memory-tools-extension.js";
-import { createMessageToolsExtension } from "./builtin-extensions/message-tools-extension.js";
+import { createSituationToolsExtension } from "./builtin-extensions/situation-tools-extension.js";
+import { createTaskToolsExtension } from "./builtin-extensions/task-tools-extension.js";
 import { ClaudeCodeRuntime } from "./claude-code-runtime.js";
 import { loadConfig } from "./config.js";
-import { cspReaderFromEnv, getCspDetail, listCspSummaries } from "./csp-customers.js";
+import { CspCustomerChannel } from "./csp-customer-channel.js";
+import { createCspRenewalSource } from "./csp-renewal-source.js";
+import { createCspTaskSource } from "./csp-task-source.js";
 import { computeDigestCounts, digestHeadline } from "./digest.js";
 import { NotifyThenActDispatcher } from "./dispatcher.js";
 import { resolveOverrideFromStore } from "./engine/overrides.js";
+import { computeTriageScore, selectByTriage } from "./engine/triage.js";
 import { ExtensionHost } from "./extension-host.js";
 import { loadExtensionsFromDir } from "./extension-loader.js";
 import { createMcpHandler } from "./mcp-server.js";
 import { errorHandler, notFoundHandler, requestLogger } from "./middleware.js";
+import { type RecentToolCall, createRecentToolCalls } from "./recent-tools.js";
 import { Router } from "./router.js";
+import { createLlmCriticVerifier } from "./verifier.js";
 
 export interface AppHandles {
 	app: Express;
@@ -68,29 +77,43 @@ export async function createApp(): Promise<AppHandles> {
 	// Action ledger — every act / notify / escalate / prep lands here
 	const ledger: ActionLedger = new SqliteActionLedger(config.dbPath);
 
-	// Customer data for the admin UI reads live from CSP when configured
-	// (source of truth for accounts/health/engagement); the local store is the
-	// fallback only when CSP isn't wired up. Agent-private history/instincts
-	// always come from the local store.
-	const cspReader = cspReaderFromEnv();
-	if (cspReader) {
-		// The CSP test backend serves an untrusted/expired TLS cert, which Node's
-		// fetch rejects. CSP_INSECURE_TLS is the opt-in escape hatch for dev/test.
-		if (/^(1|true|yes)$/i.test(process.env.CSP_INSECURE_TLS ?? "")) {
-			process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-			console.warn(
-				"[customers] CSP_INSECURE_TLS=true — TLS certificate verification is OFF process-wide. Dev/test only.",
-			);
-		}
-		console.log(`[customers] Reading live from CSP as CSM ${cspReader.csmEmail}`);
+	// Situation store — persistent storylines so the agent advances, not re-discovers
+	const situationStore: SituationStore = new SqliteSituationStore(config.dbPath);
+
+	// The CSP test backend serves an untrusted/expired TLS cert, which Node's
+	// fetch rejects. CSP_INSECURE_TLS is the opt-in escape hatch for dev/test.
+	// The brain-loop CSP account source and the csp-connector tools both rely on
+	// this being set process-wide before any CSP fetch.
+	if (
+		process.env.CSP_TOKEN &&
+		process.env.CSP_CSM_EMAIL &&
+		/^(1|true|yes)$/i.test(process.env.CSP_INSECURE_TLS ?? "")
+	) {
+		process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+		console.warn(
+			"[csp] CSP_INSECURE_TLS=true — TLS certificate verification is OFF process-wide. Dev/test only.",
+		);
 	}
 
-	// Customer channel — stub by default. Real channels (email, SMS) drop in
-	// as extensions later by implementing CustomerChannel.
-	const customerChannel: CustomerChannel = new StubCustomerChannel();
-
-	// Pending actions queue (shared across extensions, legacy draft flow)
-	const pendingActions = new Map<string, PendingAction>();
+	// Customer channel — CSP-backed when CSP is configured: dispatched sends
+	// land in CSP as activities + notes (the system of record), not a log line.
+	// Stub otherwise (dev/tests). Other channels (email, SMS) drop in later by
+	// implementing CustomerChannel.
+	let customerChannel: CustomerChannel;
+	// CSP_MOCK runs (offline fixtures) must never fire real customer-facing
+	// writes — the mock transport only covers the csp-connector tools, not this
+	// channel, so mock mode falls back to the stub.
+	if (process.env.CSP_TOKEN && process.env.CSP_MOCK !== "1") {
+		customerChannel = new CspCustomerChannel({
+			baseUrl: process.env.CSP_BASE_URL ?? "http://localhost:5656",
+			token: process.env.CSP_TOKEN,
+			timeoutMs: process.env.CSP_TIMEOUT_MS ? Number(process.env.CSP_TIMEOUT_MS) : undefined,
+		});
+		console.log("[customer-channel] CSP-backed channel active (sends write to CSP)");
+	} else {
+		customerChannel = new StubCustomerChannel();
+		console.log("[customer-channel] STUB channel active — sends only log (set CSP_TOKEN for real)");
+	}
 
 	// Extension host — collects tools, channels, and event handlers
 	const host = new ExtensionHost({
@@ -102,7 +125,6 @@ export async function createApp(): Promise<AppHandles> {
 	const lark = createLarkExtension({
 		appId: config.larkAppId,
 		appSecret: config.larkAppSecret,
-		pendingActions,
 		store,
 		defaultCsmLarkUserId: config.defaultCsmLarkUserId || undefined,
 		onMessage: async (text, senderId, _channelId) => {
@@ -122,11 +144,78 @@ export async function createApp(): Promise<AppHandles> {
 		},
 	});
 
+	// Task source — the CSM's Cerebro work queue. Selection:
+	//   TASK_SOURCE=csp            → live CSP Task API (reuses CSP_BASE_URL/CSP_TOKEN)
+	//   TASK_SOURCE=stub           → in-memory demo queue (dev/demo)
+	//   TASK_API_BASE_URL set       → standalone task backend (not yet bound)
+	//   neither                     → task iteration skipped (logged)
+	let taskSource: TaskSource | null = null;
+	if (config.taskSource === "csp") {
+		if (process.env.CSP_TOKEN) {
+			taskSource = createCspTaskSource({
+				baseUrl: process.env.CSP_BASE_URL ?? "http://localhost:5656",
+				token: process.env.CSP_TOKEN,
+				scope: (process.env.TASK_SCOPE as "all" | "mine") ?? "all",
+				maxTasks: process.env.TASK_MAX ? Number(process.env.TASK_MAX) : undefined,
+			});
+			console.log(`[tasks] Using CspTaskSource (scope=${process.env.TASK_SCOPE ?? "all"})`);
+		} else {
+			console.warn("[tasks] TASK_SOURCE=csp but CSP_TOKEN is not set — task iteration skipped.");
+		}
+	} else if (config.taskSource === "stub") {
+		taskSource = new StubTaskSource();
+		console.log("[tasks] Using StubTaskSource (in-memory demo queue)");
+	} else if (config.taskApiBaseUrl) {
+		// A standalone (non-CSP) task backend would bind here behind the same
+		// TaskSource interface.
+		console.warn(
+			`[tasks] TASK_API_BASE_URL set (${config.taskApiBaseUrl}) but no standalone connector is bound — task iteration skipped. Use TASK_SOURCE=csp or =stub.`,
+		);
+	} else {
+		console.log("[tasks] No task source configured — task iteration skipped.");
+	}
+
+	// Renewal source — upcoming/at-risk renewals as a first-class swept input.
+	//   RENEWAL_SOURCE=csp   → derive from accounts + per-account renewals (window-filtered)
+	//   RENEWAL_SOURCE=stub  → in-memory demo queue
+	//   unset                → renewal sweep skipped (logged)
+	let renewalSource: RenewalSource | null = null;
+	if (config.renewalSource === "csp") {
+		if (process.env.CSP_TOKEN && process.env.CSP_CSM_EMAIL) {
+			renewalSource = createCspRenewalSource({
+				baseUrl: process.env.CSP_BASE_URL ?? "http://localhost:5656",
+				token: process.env.CSP_TOKEN,
+				csmEmail: process.env.CSP_CSM_EMAIL,
+				windowDays: config.renewalWindowDays,
+			});
+			console.log(`[renewals] Using CspRenewalSource (window=${config.renewalWindowDays}d)`);
+		} else {
+			console.warn(
+				"[renewals] RENEWAL_SOURCE=csp but CSP_TOKEN/CSP_CSM_EMAIL not set — renewal sweep skipped.",
+			);
+		}
+	} else if (config.renewalSource === "stub") {
+		renewalSource = new StubRenewalSource();
+		console.log("[renewals] Using StubRenewalSource (in-memory demo queue)");
+	} else {
+		console.log("[renewals] No renewal source configured — renewal sweep skipped.");
+	}
+
+	// Verifier (critic) — gates notify-then-act / escalate before they commit.
+	// The default critic needs the agent, which is created AFTER extensions load,
+	// so we pass a deferred closure: verify is only ever CALLED at action time,
+	// long after `verifier` is assigned below.
+	const verifyEnabled = !/^(0|false|no)$/i.test(process.env.VERIFY_ENABLED ?? "");
+	const verifyBands = (process.env.VERIFY_BANDS ?? "notify-then-act,escalate")
+		.split(",")
+		.map((s) => s.trim())
+		.filter(Boolean);
+	let verifier: Verifier | null = null;
+
 	// Load extensions: built-in first, then any from the extensions/ directory
 	const userExtensions = await loadExtensionsFromDir(config.extensionsDir);
 	await host.load([
 		memoryToolsExtension,
-		createMessageToolsExtension({ pendingActions, host }),
 		createActionPolicyExtension({
 			ledger,
 			customerChannel,
@@ -136,14 +225,45 @@ export async function createApp(): Promise<AppHandles> {
 			// Enforce stored overrides as a hard gate (overrides are taught by the
 			// CSM as instinct notes; resolveOverrideFromStore parses them).
 			resolveOverride: (customerId) => resolveOverrideFromStore(store, customerId),
+			verify: verifyEnabled
+				? (input) =>
+						verifier
+							? verifier.verify(input)
+							: Promise.resolve({ pass: true, reason: "verifier not ready" })
+				: undefined,
+			verifyBands,
 		}),
 		createBashToolExtension({
 			allowlist: config.bashAllowlist,
 			timeoutMs: config.bashTimeoutMs,
 		}),
+		createSituationToolsExtension({ store: situationStore }),
+		// Task tools only register when a task source is configured.
+		...(taskSource ? [createTaskToolsExtension({ source: taskSource, ledger })] : []),
 		lark.extension,
 		...userExtensions,
 	]);
+
+	// Recent tool-call feed (last 100) for the Skills tab's live activity panel.
+	const recentTools = createRecentToolCalls();
+	const actionObserver = createActionObserver(ledger);
+	// Compose two observers onto the single MCP onToolCall hook: the action
+	// observer keeps the ledger honest, the recorder feeds /api/tools/recent.
+	// Both run per tool call; an error in one must not skip the other.
+	const onToolCall = async (
+		name: string,
+		params: Record<string, unknown>,
+		result: { content: string; success: boolean },
+	): Promise<void> => {
+		const customerId = String(params.business_id ?? params.customer_id ?? "") || undefined;
+		recentTools.record({
+			tool: name,
+			ts: new Date().toISOString(),
+			ok: result.success,
+			...(customerId ? { customerId } : {}),
+		});
+		await actionObserver(name, params, result);
+	};
 
 	// MCP endpoint — exposes our tools to any external MCP client (Claude Code
 	// subprocess, Cursor, etc.). The Claude Code runtime uses this to call our
@@ -152,22 +272,42 @@ export async function createApp(): Promise<AppHandles> {
 		"/mcp",
 		createMcpHandler({
 			tools: () => host.getTools(),
-			// Keep the ledger honest when the agent logs a CSP note without `act`.
-			onToolCall: createActionObserver(ledger),
+			onToolCall,
 		}),
 	);
 
-	// Agent runtime — Anthropic SDK (default) or Claude Code subprocess
+	// Agent runtime — Claude Code subprocess, reached over the MCP endpoint above.
 	const mcpUrl = `http://127.0.0.1:${config.port}/mcp`;
-	const agent: AgentBackend =
-		config.runtime === "claude-code"
-			? new ClaudeCodeRuntime(config.model, host.getTools(), config.claudeBinary, mcpUrl)
-			: new AgentRuntime(config.anthropicApiKey, config.model, host.getTools());
-	console.log(`[runtime] Using ${config.runtime}`);
+	const agent: AgentBackend = new ClaudeCodeRuntime(
+		config.model,
+		host.getTools(),
+		config.claudeBinary,
+		mcpUrl,
+	);
+	console.log("[runtime] Using claude-code");
 
-	// Router and brain loop (brain loop emits lifecycle events through the host)
+	// Now the agent exists — bind the default LLM critic (deferred closure above).
+	// VERIFIER_MODEL runs the critic on its own (cheaper/faster) model via a
+	// second runtime instance; unset = the critic shares the main agent.
+	if (verifyEnabled) {
+		const verifierAgent: AgentBackend = config.verifierModel
+			? new ClaudeCodeRuntime(config.verifierModel, host.getTools(), config.claudeBinary, mcpUrl)
+			: agent;
+		verifier = createLlmCriticVerifier(verifierAgent);
+		console.log(
+			`[verify] Critic enabled for bands: ${verifyBands.join(", ")}${
+				config.verifierModel ? ` (model: ${config.verifierModel})` : ""
+			}`,
+		);
+	} else {
+		console.log("[verify] Verification disabled (VERIFY_ENABLED=false).");
+	}
+
+	// Router and brain loop (brain loop emits lifecycle events through the host).
+	// BRAIN_LOOP_ENABLED=false keeps the API/UI up without spawning agent cycles
+	// (useful for UI work, or running the dashboard against live data read-only).
 	const router = new Router(agent, { store });
-	const brainLoopEnabled = config.runtime === "claude-code" ? true : !!config.anthropicApiKey;
+	const brainLoopEnabled = !/^(0|false|no)$/i.test(process.env.BRAIN_LOOP_ENABLED ?? "");
 
 	// Pick account source: CSP (live) when CSP_TOKEN + CSP_CSM_EMAIL are configured,
 	// otherwise fall back to the local SQLite store (demo / seed mode).
@@ -181,6 +321,8 @@ export async function createApp(): Promise<AppHandles> {
 						? Number(process.env.CSP_MAX_ACCOUNTS)
 						: undefined,
 					store,
+					situationStore,
+					ledger,
 				})
 			: undefined;
 
@@ -191,6 +333,19 @@ export async function createApp(): Promise<AppHandles> {
 		brainLoopEnabled,
 		host,
 		cspSource,
+		taskSource,
+		ledger,
+		renewalSource,
+		situationStore,
+		config.triageMax,
+		config.triageMinScore,
+		config.brainLoopRunOnStart,
+		{
+			enabled: config.skipGateEnabled,
+			renewalHorizonDays: config.skipGateRenewalHorizonDays,
+			maxSkipAgeDays: config.skipGateMaxAgeDays,
+		},
+		config.brainConcurrency,
 	);
 
 	// Dispatcher — picks up due notify-then-act sends and pushes them through
@@ -242,80 +397,6 @@ export async function createApp(): Promise<AppHandles> {
 
 	// --- API Routes (for admin web UI) ---
 
-	app.get("/api/customers", async (req, res) => {
-		// Live from CSP when configured. CSP_CSM has ~1.3k accounts, so cap the
-		// page (default 50, override with ?limit=, max 200).
-		if (cspReader) {
-			const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
-			res.json(await listCspSummaries(cspReader, limit));
-			return;
-		}
-		const profiles = await store.listProfiles();
-		const customers = await Promise.all(
-			profiles.map(async (p) => {
-				const state = await store.getState(p.id);
-				return { profile: p, state };
-			}),
-		);
-		res.json(customers);
-	});
-
-	app.get("/api/customers/:id", async (req, res) => {
-		const id = req.params.id;
-		// Agent-private data lives in the local store regardless of where the
-		// profile comes from.
-		const history = await store.getHistory(id, 50);
-		const instincts = await store.getInstincts(id);
-
-		// Prefer live CSP; fall back to the local store (e.g. a customer added
-		// via POST /api/customers, or demo mode with no CSP).
-		if (cspReader) {
-			const detail = await getCspDetail(cspReader, id);
-			if (detail) {
-				res.json({ ...detail, history, instincts });
-				return;
-			}
-		}
-
-		const profile = await store.getProfile(id);
-		if (!profile) {
-			res.status(404).json({ error: "Not found" });
-			return;
-		}
-		const state = await store.getState(id);
-		res.json({ profile, state, history, instincts });
-	});
-
-	app.post("/api/customers", async (req, res) => {
-		const profile = req.body;
-		profile.createdAt = new Date();
-		profile.updatedAt = new Date();
-		await store.upsertProfile(profile);
-		await store.updateState({
-			customerId: profile.id,
-			health: "good",
-			openIssues: 0,
-			lastContactDate: new Date(),
-			usageTrend: "flat",
-			updatedAt: new Date(),
-		});
-		res.status(201).json(profile);
-	});
-
-	app.get("/api/customers/:id/history", async (req, res) => {
-		const history = await store.getHistory(req.params.id, 100);
-		res.json(history);
-	});
-
-	app.get("/api/customers/:id/instincts", async (req, res) => {
-		const instincts = await store.getInstincts(req.params.id);
-		res.json(instincts);
-	});
-
-	app.get("/api/actions", (_req, res) => {
-		res.json(Array.from(pendingActions.values()));
-	});
-
 	// Action ledger — the agent's daily work log. Drives the digest.
 	app.get("/api/ledger", async (req, res) => {
 		const sinceStr = (req.query.since as string) ?? "";
@@ -331,102 +412,184 @@ export async function createApp(): Promise<AppHandles> {
 		res.json(entries);
 	});
 
-	app.post("/api/ledger/:id/cancel", async (req, res) => {
-		const existing = await ledger.get(req.params.id);
-		if (!existing) {
-			res.status(404).json({ error: "Not found" });
-			return;
-		}
-		if (existing.band !== "notify-then-act" && existing.band !== "escalate") {
-			res.status(400).json({ error: "Only notify-then-act and escalate can be cancelled" });
-			return;
-		}
-		if (existing.status !== "in-flight" && existing.status !== "needs-csm") {
-			res.status(400).json({ error: `Cannot cancel — already ${existing.status}` });
-			return;
-		}
-		const updated = await ledger.update(req.params.id, {
-			status: "cancelled",
-			note: (req.body?.reason as string) ?? "cancelled via admin API",
-			executedAt: new Date(),
-		});
-		res.json(updated);
+	// Console approval surfaces — the in-product human valve (no Lark needed):
+	// pending sends the CSM can still cancel, and escalations awaiting a decision.
+	app.get("/api/actions/pending", async (_req, res) => {
+		const entries = await ledger.listOpen();
+		res.json(entries.filter((e) => e.band === "notify-then-act" && e.status === "in-flight"));
 	});
 
-	app.post("/api/ledger/:id/resolve", async (req, res) => {
-		const existing = await ledger.get(req.params.id);
-		if (!existing) {
-			res.status(404).json({ error: "Not found" });
-			return;
-		}
-		if (existing.band !== "escalate") {
-			res.status(400).json({ error: "Only escalations can be resolved" });
-			return;
-		}
-		const updated = await ledger.update(req.params.id, {
-			status: "resolved",
-			note: (req.body?.outcome as string) ?? "resolved via admin API",
-			executedAt: new Date(),
-		});
-		res.json(updated);
+	app.get("/api/actions/escalations", async (_req, res) => {
+		const entries = await ledger.listOpen();
+		res.json(entries.filter((e) => e.band === "escalate" && e.status === "needs-csm"));
 	});
 
-	// "Yesterday: 47 acts, 12 notifies in-flight, 2 escalations need you."
+	// One implementation of each ledger state transition, shared by both route
+	// pairs (/api/actions/* for the console, /api/ledger/* legacy admin) so the
+	// validation rules cannot drift between surfaces.
+	const cancelHandler =
+		(defaultNote: string) => async (req: Request<{ id: string }>, res: Response) => {
+			const existing = await ledger.get(req.params.id);
+			if (!existing) {
+				res.status(404).json({ error: "Not found" });
+				return;
+			}
+			if (existing.band !== "notify-then-act" && existing.band !== "escalate") {
+				res.status(400).json({ error: "Only notify-then-act and escalate can be cancelled" });
+				return;
+			}
+			if (existing.status !== "in-flight" && existing.status !== "needs-csm") {
+				res.status(400).json({ error: `Cannot cancel — already ${existing.status}` });
+				return;
+			}
+			const updated = await ledger.update(req.params.id, {
+				status: "cancelled",
+				note: (req.body?.reason as string) ?? defaultNote,
+				executedAt: new Date(),
+			});
+			res.json(updated);
+		};
+
+	const resolveHandler =
+		(defaultNote: string) => async (req: Request<{ id: string }>, res: Response) => {
+			const existing = await ledger.get(req.params.id);
+			if (!existing) {
+				res.status(404).json({ error: "Not found" });
+				return;
+			}
+			if (existing.band !== "escalate") {
+				res.status(400).json({ error: "Only escalations can be resolved" });
+				return;
+			}
+			if (existing.status !== "needs-csm") {
+				res.status(400).json({ error: `Cannot resolve — already ${existing.status}` });
+				return;
+			}
+			const updated = await ledger.update(req.params.id, {
+				status: "resolved",
+				note: (req.body?.outcome as string) ?? defaultNote,
+				executedAt: new Date(),
+			});
+			res.json(updated);
+		};
+
+	app.post("/api/actions/:id/cancel", cancelHandler("cancelled via console"));
+	app.post("/api/actions/:id/resolve", resolveHandler("resolved via console"));
+	app.post("/api/ledger/:id/cancel", cancelHandler("cancelled via admin API"));
+	app.post("/api/ledger/:id/resolve", resolveHandler("resolved via admin API"));
+
+	// "Yesterday: 47 acts, 12 notifies in-flight, 3 situations need you."
 	app.get("/api/digest/counters", async (req, res) => {
 		const windowHours = Number(req.query.hours ?? 24);
-		const counts = await computeDigestCounts(ledger, new Date(), windowHours);
+		const counts = await computeDigestCounts(ledger, new Date(), windowHours, situationStore);
 		res.json({ headline: digestHeadline(counts), counts });
 	});
 
-	app.post("/api/actions/:id/approve", async (req, res) => {
-		const action = pendingActions.get(req.params.id);
-		if (!action) {
-			res.status(404).json({ error: "Not found" });
+	// Situations needing the CSM — open storylines (escalated OR needsAttention),
+	// each joined with its ledger storyline, plus a watching count.
+	app.get("/api/situations", async (_req, res) => {
+		const needing = await situationStore.listNeedingCsm();
+		const watching = await situationStore.listWatching();
+		const items = await Promise.all(
+			needing.map(async (s) => ({
+				...s,
+				storyline: await ledger.listBySituation(s.id),
+			})),
+		);
+		res.json({ needsCsm: items, watchingCount: watching.length });
+	});
+
+	// Triage queue — how the work loop would rank/spend this cycle. Recomputed on
+	// demand from the renewal + task sources (cheap, no model call). Shows the
+	// budget (TRIAGE_MAX/MIN) and which subjects would be deferred and why.
+	app.get("/api/triage", async (_req, res) => {
+		const max = config.triageMax > 0 ? config.triageMax : Number.POSITIVE_INFINITY;
+		const minScore = config.triageMinScore;
+		const renewals = renewalSource ? await renewalSource.listOpen() : [];
+		const tasks = taskSource ? await taskSource.listOpen() : [];
+		const renewalQ = selectByTriage(
+			renewals,
+			(r) =>
+				computeTriageScore({
+					atRisk: r.atRisk,
+					daysToRenewal: r.daysToRenewal,
+					contractValue: r.arr,
+				}),
+			{ max, minScore },
+		);
+		const taskQ = selectByTriage(tasks, (t) => computeTriageScore({ priority: t.priority }), {
+			max,
+			minScore,
+		});
+		res.json({
+			budget: { max: config.triageMax, minScore },
+			renewals: { selected: renewalQ.selected, deferred: renewalQ.deferred },
+			tasks: { selected: taskQ.selected, deferred: taskQ.deferred },
+		});
+	});
+
+	// Manual single-cycle trigger — runs one work-loop cycle on demand. Lets the
+	// loop stay disabled (BRAIN_LOOP_ENABLED=false) yet still be testable for cents
+	// during development. ?limit caps per-sweep fan-out (omitted = 3, 0 = no cap).
+	app.post("/api/brain/cycle", async (req, res) => {
+		const raw = req.query.limit;
+		let limit: number | undefined;
+		if (raw !== undefined) {
+			const n = Number(raw);
+			limit = Number.isFinite(n) && n >= 0 ? n : undefined;
+		}
+		const result = await brainLoop.runOnce({ limit });
+		if (result.ran === false) {
+			res.status(409).json(result);
 			return;
 		}
-		action.status = "approved";
-		if (action.draft) {
-			const sender = host.getChannelSender(action.draft.channelType);
-			if (sender) await sender.send(action.draft.recipientId, action.draft.text);
-		}
-		res.json(action);
+		res.json(result);
 	});
 
-	app.post("/api/actions/:id/reject", (req, res) => {
-		const action = pendingActions.get(req.params.id);
-		if (!action) {
-			res.status(404).json({ error: "Not found" });
+	// Task queue for the ops console — open tasks joined with the agent's
+	// recorded outcome (band + status) from the ledger via the task-id tag.
+	app.get("/api/tasks", async (_req, res) => {
+		if (!taskSource) {
+			res.json({ configured: false, label: null, open: [], recentOutcomes: [] });
 			return;
 		}
-		action.status = "rejected";
-		res.json(action);
-	});
-
-	// Chat
-	app.post("/api/chat", async (req, res) => {
-		const { message, customerId, sessionId } = req.body;
-		const chatSessionId = sessionId ?? (customerId ? `chat:${customerId}` : "chat:general");
-		const context = customerId ? `Current customer context: ${customerId}` : undefined;
-		const response = await agent.prompt(message, context, chatSessionId);
-		res.json({ text: response.text, toolCalls: response.toolCalls, sessionId: chatSessionId });
-	});
-
-	app.post("/api/digest", async (_req, res) => {
-		try {
-			const digest = await brainLoop.runDigest();
-			res.json({ text: digest });
-		} catch (err) {
-			res.status(500).json({ error: "Failed to generate digest. Is ANTHROPIC_API_KEY set?" });
+		const open = await taskSource.listOpen();
+		const since = new Date(Date.now() - 24 * 3600 * 1000);
+		const ledgerEntries = await ledger.listByWindow(since, new Date(Date.now() + 1));
+		// Index ledger entries by their task-id tag (latest wins).
+		const byTask = new Map<string, (typeof ledgerEntries)[number]>();
+		for (const e of ledgerEntries) {
+			const taskId = (e.payload as { taskId?: unknown } | undefined)?.taskId;
+			if (typeof taskId === "string") byTask.set(taskId, e);
 		}
+		res.json({
+			configured: true,
+			label: taskSource.label,
+			open: open.map((t) => {
+				const action = byTask.get(t.id);
+				return {
+					...t,
+					latestAction: action
+						? { band: action.band, status: action.status, summary: action.summary }
+						: null,
+				};
+			}),
+			recentOutcomes: ledgerEntries
+				.filter((e) => (e.payload as { taskId?: unknown } | undefined)?.taskId)
+				.map((e) => ({
+					taskId: (e.payload as { taskId?: string }).taskId,
+					band: e.band,
+					status: e.status,
+					summary: e.summary,
+					createdAt: e.createdAt,
+				})),
+		});
 	});
 
-	app.get("/api/sessions", (_req, res) => {
-		res.json(agent.listSessions());
-	});
-
-	app.delete("/api/sessions/:id", (req, res) => {
-		agent.clearSession(req.params.id);
-		res.json({ ok: true });
+	// Recent tool invocations (newest first) — live activity feed for the Skills tab.
+	app.get("/api/tools/recent", (_req, res) => {
+		const calls: RecentToolCall[] = recentTools.list();
+		res.json(calls);
 	});
 
 	// Extension introspection (useful for the admin UI)
@@ -450,16 +613,9 @@ export async function createApp(): Promise<AppHandles> {
 			results.database = { ok: false, detail: String(err) };
 		}
 
-		// Runtime (Anthropic SDK or Claude Code CLI)
-		if (config.runtime === "claude-code") {
-			const ping = await agent.ping();
-			results.runtime = { ok: ping.ok, detail: ping.ok ? "claude-code: CLI ready" : ping.error };
-		} else if (!config.anthropicApiKey) {
-			results.runtime = { ok: false, detail: "anthropic: ANTHROPIC_API_KEY not set" };
-		} else {
-			const ping = await agent.ping();
-			results.runtime = { ok: ping.ok, detail: ping.ok ? "anthropic: reachable" : ping.error };
-		}
+		// Runtime (Claude Code CLI)
+		const ping = await agent.ping();
+		results.runtime = { ok: ping.ok, detail: ping.ok ? "claude-code: CLI ready" : ping.error };
 
 		// Lark
 		if (!config.larkAppId || !config.larkAppSecret) {
@@ -483,6 +639,8 @@ export async function createApp(): Promise<AppHandles> {
 		dispatcher.stop();
 		await host.shutdown();
 		if (ledger instanceof SqliteActionLedger) (ledger as SqliteActionLedger).close();
+		if (situationStore instanceof SqliteSituationStore)
+			(situationStore as SqliteSituationStore).close();
 		if (store instanceof SqliteStore) (store as SqliteStore).close();
 	};
 

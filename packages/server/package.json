@@ -13,7 +13,6 @@
 		"eval:portfolio": "node --import tsx src/eval/portfolio.ts"
 	},
 	"dependencies": {
-		"@anthropic-ai/sdk": "^0.39.0",
 		"@cerebro-claw/channel-lark": "workspace:*",
 		"@cerebro-claw/memory": "workspace:*",
 		"@cerebro-claw/shared": "workspace:*",

@@ -31,11 +31,6 @@ export function verifyLarkSignature(
 }
 
 export type MessageHandler = (message: InboundMessage) => Promise<void>;
-export type CardActionHandler = (
-	actionId: string,
-	actionValue: Record<string, string>,
-	userId: string,
-) => Promise<void>;
 
 export class LarkBot implements ChannelAdapter {
 	readonly type = "lark";
@@ -43,7 +38,6 @@ export class LarkBot implements ChannelAdapter {
 	private accessToken: string | null = null;
 	private tokenExpiresAt = 0;
 	private handler: MessageHandler | null = null;
-	private cardActionHandler: CardActionHandler | null = null;
 
 	constructor(config: LarkConfig) {
 		this.config = config;
@@ -58,7 +52,6 @@ export class LarkBot implements ChannelAdapter {
 
 	async stop(): Promise<void> {
 		this.handler = null;
-		this.cardActionHandler = null;
 	}
 
 	async send(recipientId: string, text: string): Promise<void> {
@@ -73,30 +66,12 @@ export class LarkBot implements ChannelAdapter {
 		this.handler = handler;
 	}
 
-	onCardAction(handler: CardActionHandler): void {
-		this.cardActionHandler = handler;
-	}
-
 	async handleWebhook(body: Record<string, unknown>): Promise<Record<string, unknown> | null> {
 		if (body.type === "url_verification") {
 			return { challenge: body.challenge };
 		}
 
 		const header = body.header as Record<string, unknown> | undefined;
-
-		// Interactive card action callback
-		if (header?.event_type === "card.action.trigger") {
-			const event = body.event as Record<string, unknown>;
-			const action = event.action as Record<string, unknown>;
-			const actionValue = action.value as Record<string, string>;
-			const operator = event.operator as Record<string, unknown>;
-			const userId = (operator?.open_id as string) ?? "";
-
-			if (this.cardActionHandler) {
-				await this.cardActionHandler(action.tag as string, actionValue, userId);
-			}
-			return { ok: true };
-		}
 
 		if (header?.event_type === "im.message.receive_v1") {
 			const event = body.event as Record<string, unknown>;
@@ -228,42 +203,4 @@ export interface LarkCardAction {
 	text: { tag: string; content: string };
 	type: "primary" | "danger" | "default";
 	value: Record<string, string>;
-}
-
-export function buildApprovalCard(
-	actionId: string,
-	customerName: string,
-	description: string,
-	draftText: string,
-): LarkCard {
-	return {
-		config: { wide_screen_mode: true },
-		header: {
-			title: { tag: "plain_text", content: `Action needed: ${customerName}` },
-			template: "orange",
-		},
-		elements: [
-			{ tag: "div", text: { tag: "plain_text", content: description } },
-			{ tag: "hr" },
-			{ tag: "div", text: { tag: "lark_md", content: `**Draft:**\n${draftText}` } },
-			{ tag: "hr" },
-			{
-				tag: "action",
-				actions: [
-					{
-						tag: "button",
-						text: { tag: "plain_text", content: "Approve & Send" },
-						type: "primary",
-						value: { action: "approve", id: actionId },
-					},
-					{
-						tag: "button",
-						text: { tag: "plain_text", content: "Reject" },
-						type: "danger",
-						value: { action: "reject", id: actionId },
-					},
-				],
-			},
-		],
-	};
 }

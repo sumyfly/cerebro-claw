@@ -1,0 +1,712 @@
+/* ============================================================================
+ * CEREBRO // CLAW — Agent Ops Console
+ * SIGINT terminal / mission-control aesthetic. Bespoke chrome layer on top of
+ * the antd darkAlgorithm theme configured in App.tsx.
+ * ========================================================================== */
+
+:root {
+	/* Surfaces */
+	--ink: #0a0e14;
+	--panel: #10151f;
+	--panel-raised: #161c27;
+	--border: #1c2430;
+
+	/* Text */
+	--text: #c6d0dd;
+	--text-dim: #6b7787;
+	--text-faint: #4a5563;
+
+	/* Signal accent */
+	--cyan: #2dd4bf;
+
+	/* Status language */
+	--ok: #3fb950; /* done / executed / resolved */
+	--pending: #d29922; /* in-flight / needs-attention */
+	--danger: #f85149; /* needs-you / failed */
+	--prep: #39c5cf; /* prep band */
+	--grey: #6b7787; /* cancelled */
+}
+
+* {
+	box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+	height: 100%;
+	margin: 0;
+}
+
+body {
+	background: var(--ink);
+	color: var(--text);
+	font-family: "IBM Plex Sans", system-ui, sans-serif;
+	font-weight: 400;
+	-webkit-font-smoothing: antialiased;
+	letter-spacing: 0.01em;
+}
+
+/* Dot-grid + radial vignette for screen depth. */
+.cc-root {
+	position: relative;
+	min-height: 100vh;
+	background-color: var(--ink);
+	background-image: radial-gradient(ellipse at 50% 0%, rgba(45, 212, 191, 0.04), transparent 55%),
+		radial-gradient(circle at 1px 1px, rgba(108, 119, 135, 0.07) 1px, transparent 0);
+	background-size: 100% 100%, 22px 22px;
+}
+
+.cc-root::after {
+	/* faint vignette */
+	content: "";
+	position: fixed;
+	inset: 0;
+	pointer-events: none;
+	box-shadow: inset 0 0 240px 40px rgba(0, 0, 0, 0.55);
+	z-index: 0;
+}
+
+/* Monospace utility for ids / timestamps / counts / durations. */
+.mono {
+	font-family: "JetBrains Mono", ui-monospace, monospace;
+	font-variant-numeric: tabular-nums;
+}
+
+/* Headings font. */
+.head {
+	font-family: "Chakra Petch", "IBM Plex Sans", sans-serif;
+}
+
+/* ============================ ICON RAIL ============================ */
+.cc-rail {
+	width: 64px;
+	flex: 0 0 64px;
+	background: var(--panel);
+	border-right: 1px solid var(--border);
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	padding-top: 8px;
+	gap: 4px;
+	z-index: 2;
+}
+
+.cc-rail-item {
+	position: relative;
+	width: 56px;
+	padding: 9px 0 6px;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 4px;
+	cursor: pointer;
+	border-radius: 4px;
+	color: var(--text-dim);
+	background: none;
+	border: none;
+	border-left: 2px solid transparent;
+	font: inherit;
+	transition: background 0.15s, color 0.15s;
+}
+
+.cc-rail-item:hover {
+	background: var(--panel-raised);
+	color: var(--text);
+}
+
+.cc-rail-item.active {
+	color: var(--cyan);
+	background: var(--panel-raised);
+	border-left: 2px solid var(--cyan);
+}
+
+.cc-rail-item .anticon {
+	font-size: 19px;
+}
+
+.cc-rail-label {
+	font-family: "Chakra Petch", sans-serif;
+	font-size: 8.5px;
+	letter-spacing: 0.1em;
+	text-transform: uppercase;
+}
+
+.cc-rail-badge {
+	position: absolute;
+	top: 4px;
+	right: 8px;
+	min-width: 15px;
+	height: 15px;
+	padding: 0 4px;
+	border-radius: 8px;
+	background: var(--danger);
+	color: #0a0e14;
+	font-family: "JetBrains Mono", monospace;
+	font-size: 9px;
+	font-weight: 600;
+	line-height: 15px;
+	text-align: center;
+}
+
+.cc-rail-badge.ring {
+	animation: pulse-ring-red 1.6s ease-out infinite;
+}
+
+@keyframes pulse-ring-red {
+	0% {
+		box-shadow: 0 0 0 0 rgba(248, 81, 73, 0.6);
+	}
+	70% {
+		box-shadow: 0 0 0 7px rgba(248, 81, 73, 0);
+	}
+	100% {
+		box-shadow: 0 0 0 0 rgba(248, 81, 73, 0);
+	}
+}
+
+/* ============================ TELEMETRY BAR ============================ */
+.cc-telemetry {
+	height: 44px;
+	flex: 0 0 44px;
+	display: flex;
+	align-items: center;
+	gap: 22px;
+	padding: 0 20px;
+	background: linear-gradient(180deg, #0d121b, #0a0e14);
+	border-bottom: 1px solid var(--border);
+	font-family: "JetBrains Mono", monospace;
+	font-size: 12px;
+	z-index: 2;
+}
+
+.cc-tel-brand {
+	font-family: "Chakra Petch", sans-serif;
+	font-weight: 700;
+	font-size: 14px;
+	letter-spacing: 0.14em;
+	color: var(--text);
+	margin-right: 6px;
+}
+
+.cc-tel-brand .slash {
+	color: var(--cyan);
+}
+
+.cc-tel-counter {
+	display: flex;
+	align-items: baseline;
+	gap: 6px;
+}
+
+.cc-tel-counter .lbl {
+	color: var(--text-faint);
+	font-size: 10px;
+	letter-spacing: 0.12em;
+}
+
+.cc-tel-counter .val {
+	font-size: 13px;
+	font-weight: 600;
+}
+
+.cc-tel-sep {
+	color: var(--text-faint);
+}
+
+.cc-tel-right {
+	margin-left: auto;
+	display: flex;
+	align-items: center;
+	gap: 16px;
+	color: var(--text-dim);
+	font-size: 11px;
+}
+
+.cc-live {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	color: var(--ok);
+	letter-spacing: 0.1em;
+	font-size: 11px;
+}
+
+.cc-live .dot {
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: var(--ok);
+	animation: blink 1.4s step-end infinite;
+}
+
+@keyframes blink {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.15;
+	}
+}
+
+/* ============================ PANELS ============================ */
+.cc-content {
+	flex: 1 1 auto;
+	min-width: 0;
+	padding: 18px 22px 40px;
+	overflow-y: auto;
+	z-index: 1;
+}
+
+.cc-panel {
+	background: var(--panel);
+	border: 1px solid var(--border);
+	border-radius: 4px;
+	padding: 14px 16px 16px;
+	opacity: 0;
+	animation: panel-in 0.4s ease forwards;
+}
+
+@keyframes panel-in {
+	from {
+		opacity: 0;
+		transform: translateY(8px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+.cc-panel-header {
+	font-family: "JetBrains Mono", monospace;
+	text-transform: uppercase;
+	letter-spacing: 0.12em;
+	font-size: 11px;
+	color: var(--text-dim);
+	margin-bottom: 12px;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.cc-panel-header::before {
+	content: "▸";
+	color: var(--cyan);
+}
+
+.cc-panel-header .count {
+	color: var(--text-faint);
+	margin-left: 4px;
+}
+
+/* ============================ STATUS DOT ============================ */
+.cc-dot {
+	display: inline-block;
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	flex: 0 0 8px;
+}
+
+.cc-dot.pulse {
+	animation: dot-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes dot-pulse {
+	0%,
+	100% {
+		opacity: 1;
+		box-shadow: 0 0 0 0 currentColor;
+	}
+	50% {
+		opacity: 0.55;
+		box-shadow: 0 0 0 3px transparent;
+	}
+}
+
+/* ============================ BAND CHIP ============================ */
+.cc-chip {
+	display: inline-flex;
+	align-items: center;
+	height: 18px;
+	padding: 0 7px;
+	border-radius: 3px;
+	font-family: "JetBrains Mono", monospace;
+	font-size: 10px;
+	font-weight: 600;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	border: 1px solid;
+	white-space: nowrap;
+}
+
+/* ============================ TASK / LIST ROWS ============================ */
+.cc-row {
+	border-left: 3px solid var(--grey);
+	background: var(--panel-raised);
+	border-radius: 3px;
+	padding: 9px 11px;
+	margin-bottom: 8px;
+	transition: background 0.12s;
+}
+
+.cc-row:hover {
+	background: #1a212d;
+}
+
+.cc-feed-row {
+	animation: slide-in 0.3s ease;
+}
+
+@keyframes slide-in {
+	from {
+		opacity: 0;
+		transform: translateX(-10px);
+	}
+	to {
+		opacity: 1;
+		transform: translateX(0);
+	}
+}
+
+/* ============================ KANBAN ============================ */
+.cc-kanban {
+	display: grid;
+	grid-template-columns: repeat(4, 1fr);
+	gap: 14px;
+	align-items: start;
+}
+
+.cc-col {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+
+.cc-card-summary {
+	color: var(--text);
+	font-size: 12.5px;
+	line-height: 1.4;
+	margin: 5px 0 2px;
+}
+
+.cc-meta {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.cc-id {
+	font-family: "JetBrains Mono", monospace;
+	font-size: 10.5px;
+	color: var(--text-faint);
+}
+
+.cc-cust {
+	font-size: 11px;
+	color: var(--cyan);
+	font-weight: 500;
+}
+
+.cc-time {
+	font-family: "JetBrains Mono", monospace;
+	font-size: 10.5px;
+	color: var(--text-dim);
+}
+
+/* ============================ FILTER CHIPS / SEGMENTED ============================ */
+.cc-toolbar {
+	display: flex;
+	align-items: center;
+	gap: 16px;
+	flex-wrap: wrap;
+	margin-bottom: 16px;
+}
+
+.cc-seg {
+	display: inline-flex;
+	border: 1px solid var(--border);
+	border-radius: 4px;
+	overflow: hidden;
+}
+
+.cc-seg button {
+	background: var(--panel);
+	border: none;
+	color: var(--text-dim);
+	font-family: "JetBrains Mono", monospace;
+	font-size: 11px;
+	letter-spacing: 0.06em;
+	padding: 5px 12px;
+	cursor: pointer;
+	border-right: 1px solid var(--border);
+}
+
+.cc-seg button:last-child {
+	border-right: none;
+}
+
+.cc-seg button.on {
+	background: var(--panel-raised);
+	color: var(--cyan);
+}
+
+.cc-fchip {
+	font-family: "JetBrains Mono", monospace;
+	font-size: 10px;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	padding: 3px 9px;
+	border-radius: 3px;
+	border: 1px solid var(--border);
+	background: var(--panel);
+	color: var(--text-dim);
+	cursor: pointer;
+	transition: border-color 0.12s, color 0.12s;
+}
+
+.cc-fchip.on {
+	color: var(--ink);
+	font-weight: 600;
+}
+
+.cc-fchip-group {
+	display: flex;
+	gap: 6px;
+	align-items: center;
+	flex-wrap: wrap;
+}
+
+.cc-btn {
+	font-family: "JetBrains Mono", monospace;
+	font-size: 11px;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	padding: 5px 12px;
+	border-radius: 4px;
+	border: 1px solid var(--border);
+	background: var(--panel-raised);
+	color: var(--cyan);
+	cursor: pointer;
+	transition: border-color 0.12s, color 0.12s, opacity 0.12s;
+}
+
+.cc-btn:hover:not(:disabled) {
+	border-color: var(--cyan);
+}
+
+.cc-btn:disabled {
+	color: var(--text-dim);
+	cursor: default;
+	opacity: 0.6;
+}
+
+.cc-fchip-grouplabel {
+	font-family: "JetBrains Mono", monospace;
+	font-size: 9px;
+	letter-spacing: 0.12em;
+	color: var(--text-faint);
+	text-transform: uppercase;
+	margin-right: 2px;
+}
+
+/* ============================ EMPTY / IDLE ============================ */
+.cc-empty {
+	min-height: 320px;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 14px;
+	color: var(--text-dim);
+	text-align: center;
+}
+
+.cc-empty .glyph {
+	font-size: 40px;
+	color: var(--ok);
+	opacity: 0.7;
+}
+
+.cc-empty .line {
+	font-family: "JetBrains Mono", monospace;
+	letter-spacing: 0.14em;
+	font-size: 13px;
+}
+
+.cc-empty .sub {
+	font-size: 11px;
+	color: var(--text-faint);
+	letter-spacing: 0.08em;
+}
+
+/* ============================ ESCALATION CARD ============================ */
+.cc-esc {
+	border-left: 3px solid var(--danger);
+	background: var(--panel);
+	border: 1px solid var(--border);
+	border-left: 3px solid var(--danger);
+	border-radius: 4px;
+	padding: 16px 18px;
+	margin-bottom: 14px;
+}
+
+.cc-esc-block {
+	margin-top: 12px;
+}
+
+.cc-esc-block .k {
+	font-family: "JetBrains Mono", monospace;
+	font-size: 10px;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	color: var(--text-faint);
+	margin-bottom: 4px;
+}
+
+.cc-esc-block .v {
+	font-size: 12.5px;
+	color: var(--text);
+	line-height: 1.5;
+	white-space: pre-wrap;
+}
+
+.cc-esc-block.rec .v {
+	color: var(--cyan);
+}
+
+/* ============================ KV ROWS (settings / feed) ============================ */
+.cc-kv {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 8px 4px;
+	border-bottom: 1px solid var(--border);
+}
+
+.cc-kv:last-child {
+	border-bottom: none;
+}
+
+.cc-kv .key {
+	font-family: "JetBrains Mono", monospace;
+	font-size: 12px;
+	color: var(--text);
+	min-width: 140px;
+}
+
+.cc-kv .val {
+	font-family: "JetBrains Mono", monospace;
+	font-size: 11.5px;
+	color: var(--text-dim);
+}
+
+.cc-tool {
+	padding: 7px 4px;
+	border-bottom: 1px solid var(--border);
+}
+
+.cc-tool:last-child {
+	border-bottom: none;
+}
+
+.cc-tool .name {
+	font-family: "JetBrains Mono", monospace;
+	font-size: 12px;
+	color: var(--cyan);
+}
+
+.cc-tool .desc {
+	font-size: 11px;
+	color: var(--text-dim);
+	line-height: 1.4;
+	margin-top: 2px;
+}
+
+.cc-chips-inline {
+	display: flex;
+	gap: 6px;
+	flex-wrap: wrap;
+	margin-top: 8px;
+}
+
+.cc-tag {
+	font-family: "JetBrains Mono", monospace;
+	font-size: 10px;
+	letter-spacing: 0.04em;
+	padding: 2px 8px;
+	border-radius: 3px;
+	border: 1px solid var(--border);
+	background: var(--panel-raised);
+	color: var(--text-dim);
+}
+
+.cc-tag.cyan {
+	color: var(--cyan);
+	border-color: rgba(45, 212, 191, 0.4);
+}
+
+.cc-grid-2 {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 16px;
+	align-items: start;
+}
+
+.cc-page-title {
+	font-family: "Chakra Petch", sans-serif;
+	font-size: 17px;
+	font-weight: 600;
+	letter-spacing: 0.06em;
+	color: var(--text);
+	margin: 0 0 16px;
+}
+
+.cc-loading {
+	font-family: "JetBrains Mono", monospace;
+	color: var(--text-dim);
+	font-size: 12px;
+	letter-spacing: 0.1em;
+	padding: 24px 4px;
+}
+
+/* ============================ ANTD OVERRIDES ============================ */
+.cc-root .ant-modal-content,
+.cc-root .ant-modal-header {
+	background: var(--panel) !important;
+}
+
+.ant-modal-content {
+	border: 1px solid var(--border);
+}
+
+.ant-modal-title {
+	font-family: "Chakra Petch", sans-serif !important;
+	letter-spacing: 0.06em;
+}
+
+.ant-input,
+.ant-input-affix-wrapper {
+	font-family: "JetBrains Mono", monospace;
+	background: var(--ink) !important;
+}
+
+/* scrollbar */
+.cc-content::-webkit-scrollbar,
+.cc-feed-scroll::-webkit-scrollbar {
+	width: 8px;
+}
+
+.cc-content::-webkit-scrollbar-thumb,
+.cc-feed-scroll::-webkit-scrollbar-thumb {
+	background: var(--border);
+	border-radius: 4px;
+}
+
+.cc-feed-scroll {
+	max-height: 620px;
+	overflow-y: auto;
+}

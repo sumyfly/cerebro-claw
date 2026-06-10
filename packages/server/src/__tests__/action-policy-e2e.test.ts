@@ -46,6 +46,7 @@ describe("Action policy end-to-end", () => {
 			customer_name: "Acme",
 			summary: "Logged usage-drop note",
 			reason: "Engagement down 35% vs last week",
+			evidence: { kind: "note", id: "note-e2e-1" },
 		});
 
 		// 2. The agent queues a notify-then-act.
@@ -90,14 +91,11 @@ describe("Action policy app integration: counters update after a tool runs", () 
 	let shutdown: () => Promise<void>;
 	let tmpDir: string;
 	let prevDbPath: string | undefined;
-	let prevAnthropicKey: string | undefined;
 
 	beforeAll(async () => {
 		tmpDir = mkdtempSync(join(tmpdir(), "cc-e2e-"));
 		prevDbPath = process.env.DB_PATH;
-		prevAnthropicKey = process.env.ANTHROPIC_API_KEY;
 		process.env.DB_PATH = join(tmpDir, "test.db");
-		process.env.ANTHROPIC_API_KEY = "fake-key-for-tests";
 		const handles = await createApp();
 		app = handles.app;
 		shutdown = handles.shutdown;
@@ -107,8 +105,6 @@ describe("Action policy app integration: counters update after a tool runs", () 
 		await shutdown();
 		if (prevDbPath !== undefined) process.env.DB_PATH = prevDbPath;
 		else delete process.env.DB_PATH;
-		if (prevAnthropicKey !== undefined) process.env.ANTHROPIC_API_KEY = prevAnthropicKey;
-		else delete process.env.ANTHROPIC_API_KEY;
 		rmSync(tmpDir, { recursive: true, force: true });
 	});
 
@@ -116,7 +112,7 @@ describe("Action policy app integration: counters update after a tool runs", () 
 		const res = await request(app).get("/api/digest/counters");
 		expect(res.status).toBe(200);
 		expect(res.body.headline).toBe(
-			"Yesterday: 0 acts, 0 notifies in-flight, 0 escalations need you.",
+			"Yesterday: 0 acts, 0 notifies in-flight, 0 situations need you.",
 		);
 		expect(res.body.counts.acts).toBe(0);
 		expect(res.body.counts.notifies.inFlight).toBe(0);

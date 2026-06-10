@@ -2,12 +2,12 @@ services:
   server:
     build: .
     ports:
-      - "3000:3000"
+      - "5100:5100"
     environment:
-      PORT: 3000
+      PORT: 5100
       DB_PATH: /data/cerebro-claw.db
       EXTENSIONS_DIR: /app/extensions
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CLAUDE_BINARY: ${CLAUDE_BINARY:-claude}
       LARK_APP_ID: ${LARK_APP_ID:-}
       LARK_APP_SECRET: ${LARK_APP_SECRET:-}
       LARK_VERIFICATION_TOKEN: ${LARK_VERIFICATION_TOKEN:-}
@@ -20,7 +20,7 @@ services:
       - cerebro-data:/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1))"]
+      test: ["CMD", "node", "-e", "fetch('http://localhost:5100/health').then(r=>process.exit(r.ok?0:1))"]
       interval: 30s
       timeout: 5s
       retries: 3
