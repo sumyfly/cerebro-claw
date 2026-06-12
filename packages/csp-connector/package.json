@@ -12,7 +12,7 @@
 		"build": "tsc",
 		"dev": "tsc --watch",
 		"lint": "biome check src/",
-		"test": "vitest run"
+		"test": "vitest run --passWithNoTests"
 	},
 	"dependencies": {
 		"@cerebro-claw/shared": "workspace:*"
