@@ -37,8 +37,8 @@ import { computeDigestCounts, digestHeadline } from "./digest.js";
 import { NotifyThenActDispatcher } from "./dispatcher.js";
 import { resolveOverrideFromStore } from "./engine/overrides.js";
 import { computeTriageScore, selectByTriage } from "./engine/triage.js";
+import cspConnector from "@cerebro-claw/csp-connector";
 import { ExtensionHost } from "./extension-host.js";
-import { loadExtensionsFromDir } from "./extension-loader.js";
 import { TurnRegistry, createMcpHarnessHandler, wrapLedgerForHarness } from "./harness/index.js";
 import { createMcpHandler } from "./mcp-server.js";
 import { errorHandler, notFoundHandler, requestLogger } from "./middleware.js";
@@ -212,8 +212,10 @@ export async function createApp(): Promise<AppHandles> {
 		.filter(Boolean);
 	let verifier: Verifier | null = null;
 
-	// Load extensions: built-in first, then any from the extensions/ directory
-	const userExtensions = await loadExtensionsFromDir(config.extensionsDir);
+	// Register all extensions statically. They're all first-party — there is no
+	// third-party plugin surface, so a filesystem scanner would be ceremony for
+	// no payoff. If a future extension genuinely needs runtime discovery, add
+	// the loader back behind a real use case.
 	await host.load([
 		memoryToolsExtension,
 		createActionPolicyExtension({
@@ -241,7 +243,7 @@ export async function createApp(): Promise<AppHandles> {
 		// Task tools only register when a task source is configured.
 		...(taskSource ? [createTaskToolsExtension({ source: taskSource, ledger })] : []),
 		lark.extension,
-		...userExtensions,
+		cspConnector,
 	]);
 
 	// Recent tool-call feed (last 100) for the Skills tab's live activity panel.

@@ -30,7 +30,6 @@ export interface ServerConfig {
 	dbPath: string;
 	bashAllowlist: string[];
 	bashTimeoutMs: number;
-	extensionsDir: string;
 	adminToken: string;
 	larkVerificationToken: string;
 	claudeBinary: string;
@@ -95,7 +94,6 @@ export function loadConfig(): ServerConfig {
 		dbPath: process.env.DB_PATH ?? join(homedir(), ".cerebro-claw", "data.db"),
 		bashAllowlist,
 		bashTimeoutMs: Number(process.env.BASH_TIMEOUT_MS ?? 30_000),
-		extensionsDir: process.env.EXTENSIONS_DIR ?? join(process.cwd(), "extensions"),
 		adminToken: process.env.ADMIN_TOKEN ?? "",
 		larkVerificationToken: process.env.LARK_VERIFICATION_TOKEN ?? "",
 		claudeBinary: process.env.CLAUDE_BINARY ?? "claude",

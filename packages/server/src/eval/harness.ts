@@ -1,8 +1,6 @@
-import { existsSync } from "node:fs";
 import type { Server as HttpServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import cspConnector from "@cerebro-claw/csp-connector";
 import type { ActionLedger, ChannelAdapter, CustomerChannel } from "@cerebro-claw/shared";
 import express from "express";
 import { createActionObserver } from "../action-observer.js";
@@ -12,7 +10,6 @@ import { ClaudeCodeRuntime } from "../claude-code-runtime.js";
 import { loadConfig } from "../config.js";
 import { resolveOverrideFromStore } from "../engine/overrides.js";
 import { ExtensionHost } from "../extension-host.js";
-import { loadExtensionsFromDir } from "../extension-loader.js";
 import { createMcpHandler } from "../mcp-server.js";
 
 /**
@@ -100,32 +97,9 @@ export async function buildAgentForEval(deps: EvalAgentDeps): Promise<EvalAgent>
 		config: { dbPath: ":memory:", model: config.model },
 	});
 
-	// csp-connector lives on the filesystem and is default-exported as an
-	// Extension; load it through the same loader app.ts uses, so the mock
-	// transport wiring is exercised exactly as in production.
-	//
-	// config.extensionsDir defaults to <cwd>/extensions, which is wrong here:
-	// the eval runs from packages/server, but csp-connector lives at the repo
-	// root's extensions/ dir. Resolve from this module (…/packages/server/src/
-	// eval/harness.ts → repo root is four levels up) and only fall back to the
-	// configured dir if EXTENSIONS_DIR was set explicitly.
-	const repoRootExtensions = resolve(
-		dirname(fileURLToPath(import.meta.url)),
-		"../../../../extensions",
-	);
-	const extensionsDir = process.env.EXTENSIONS_DIR
-		? config.extensionsDir
-		: existsSync(resolve(repoRootExtensions, "csp-connector"))
-			? repoRootExtensions
-			: config.extensionsDir;
-	const cspConnectorDir = resolve(extensionsDir, "csp-connector");
-	const cspExtensions = await loadExtensionsFromDir(cspConnectorDir);
-	if (cspExtensions.length === 0) {
-		console.warn(
-			`[eval-harness] csp-connector not found under ${cspConnectorDir} — the agent will have no csp_* tools.`,
-		);
-	}
-
+	// csp-connector is a workspace package now (statically imported above) — no
+	// filesystem discovery dance. Same module the production app loads, so the
+	// mock transport wiring is exercised exactly as in production.
 	await host.load([
 		// Register the stub CSM channel first, the same way lark-extension does
 		// (api.registerChannel), so host.getChannelSender() resolves to it and
@@ -158,7 +132,7 @@ export async function buildAgentForEval(deps: EvalAgentDeps): Promise<EvalAgent>
 				return resolveOverrideFromStore(store, customerId);
 			},
 		}),
-		...cspExtensions,
+		cspConnector,
 	]);
 
 	// Stand up the in-process MCP server on a free port — same handler app.ts
