@@ -118,6 +118,40 @@ describe("SqliteActionLedger", () => {
 		expect(updated?.payload).toEqual({ recipient: "x@y", text: "hi" });
 	});
 
+	it("countByTurn counts only rows stamped with that turn id", async () => {
+		const turnA = "turn-aaa";
+		const turnB = "turn-bbb";
+		for (const summary of ["a1", "a2", "a3"]) {
+			await ledger.record({
+				band: "act",
+				customerId: "c",
+				summary,
+				reason: "x",
+				status: "done",
+				turnId: turnA,
+			});
+		}
+		await ledger.record({
+			band: "act",
+			customerId: "c",
+			summary: "b1",
+			reason: "x",
+			status: "done",
+			turnId: turnB,
+		});
+		// A row with no turn id (system-injected, dispatcher dead-letter, etc.)
+		await ledger.record({
+			band: "act",
+			customerId: "c",
+			summary: "untagged",
+			reason: "x",
+			status: "done",
+		});
+		expect(await ledger.countByTurn(turnA)).toBe(3);
+		expect(await ledger.countByTurn(turnB)).toBe(1);
+		expect(await ledger.countByTurn("turn-never-used")).toBe(0);
+	});
+
 	it("listByWindow respects [since, until)", async () => {
 		await ledger.record({
 			band: "act",

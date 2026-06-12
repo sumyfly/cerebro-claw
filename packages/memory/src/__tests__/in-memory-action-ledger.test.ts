@@ -172,4 +172,35 @@ describe("InMemoryActionLedger", () => {
 	it("update returns null for unknown id", async () => {
 		expect(await ledger.update("nope", { status: "executed" })).toBeNull();
 	});
+
+	it("countByTurn counts only rows stamped with that turn id", async () => {
+		for (const summary of ["a1", "a2"]) {
+			await ledger.record({
+				band: "act",
+				customerId: "c",
+				summary,
+				reason: "x",
+				status: "done",
+				turnId: "turn-A",
+			});
+		}
+		await ledger.record({
+			band: "act",
+			customerId: "c",
+			summary: "b1",
+			reason: "x",
+			status: "done",
+			turnId: "turn-B",
+		});
+		await ledger.record({
+			band: "act",
+			customerId: "c",
+			summary: "untagged",
+			reason: "x",
+			status: "done",
+		});
+		expect(await ledger.countByTurn("turn-A")).toBe(2);
+		expect(await ledger.countByTurn("turn-B")).toBe(1);
+		expect(await ledger.countByTurn("turn-missing")).toBe(0);
+	});
 });

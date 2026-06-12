@@ -66,7 +66,9 @@ describe("App integration", () => {
 		expect(res.body.tools.length).toBeGreaterThan(0);
 	});
 
-	it("diagnostics endpoint runs all checks", async () => {
+	// /api/diagnostics calls agent.ping() which spawns the real claude binary —
+	// under turbo load the spawn can blow past the default 5s.
+	it("diagnostics endpoint runs all checks", { timeout: 20_000 }, async () => {
 		const res = await request(app).get("/api/diagnostics");
 		expect(res.status).toBe(200);
 		expect(res.body.database).toBeDefined();

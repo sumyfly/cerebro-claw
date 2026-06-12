@@ -63,7 +63,11 @@ printf '%s\\n' '{"type":"result","result":"orphaned response"}'
 	return path;
 }
 
-describe("ClaudeCodeRuntime", () => {
+// Tests in this describe block all spawn fake-claude subprocesses. Under heavy
+// turbo load (build + parallel suites) subprocess startup can blow past the
+// vitest default 5s — give the whole block a generous ceiling instead of
+// per-test annotations.
+describe("ClaudeCodeRuntime", { timeout: 20_000 }, () => {
 	it("ping succeeds when binary exists", async () => {
 		const path = makeFakeClaude("ok");
 		const runtime = new ClaudeCodeRuntime("sonnet", [], path);
