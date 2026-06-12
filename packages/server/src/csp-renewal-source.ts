@@ -77,6 +77,13 @@ export function createCspRenewalSource(opts: CspRenewalSourceOptions): RenewalSo
 	const windowDays = opts.windowDays ?? 90;
 	const clock = () => opts.now?.() ?? new Date();
 
+	/**
+	 * Wraps a CSP GET and unwraps `body.data`. Failures (HTTP error, timeout,
+	 * malformed JSON) are LOGGED rather than swallowed — silent undefined was
+	 * what hid the earlier "renewals returned 0 inside the cycle" mystery; we
+	 * keep returning undefined so callers degrade, but the log line tells you
+	 * which path and why.
+	 */
 	async function getData<T = Record<string, unknown>>(path: string): Promise<T | undefined> {
 		const ac = new AbortController();
 		const t = setTimeout(() => ac.abort(), timeoutMs);
@@ -85,10 +92,16 @@ export function createCspRenewalSource(opts: CspRenewalSourceOptions): RenewalSo
 				headers: { Authorization: `Bearer ${opts.token}`, Accept: "application/json" },
 				signal: ac.signal,
 			});
-			if (!res.ok) return undefined;
+			if (!res.ok) {
+				console.error(`[csp-renewals] GET ${path} -> HTTP ${res.status}`);
+				return undefined;
+			}
 			const body = (await res.json()) as { data?: unknown };
 			return body.data as T;
-		} catch {
+		} catch (err) {
+			const e = err as Error & { name?: string };
+			const reason = e.name === "AbortError" ? `timeout after ${timeoutMs}ms` : e.message;
+			console.error(`[csp-renewals] GET ${path} failed: ${reason}`);
 			return undefined;
 		} finally {
 			clearTimeout(t);
@@ -133,6 +146,12 @@ export function createCspRenewalSource(opts: CspRenewalSourceOptions): RenewalSo
 				(await getData<{ id: string; name: string }[]>(
 					`/api/v1/accounts?assignedCsmId=${encodeURIComponent(opts.csmEmail)}&limit=${maxAccounts}`,
 				)) ?? [];
+			if (accounts.length === 0) {
+				console.warn(
+					`[csp-renewals] listOpen: accounts endpoint returned 0 — check CSP_TOKEN / CSM email`,
+				);
+				return [];
+			}
 			const out: RenewalRecord[] = [];
 			for (const a of accounts) {
 				// CSP returns the renewals endpoint as a paginated wrapper:
