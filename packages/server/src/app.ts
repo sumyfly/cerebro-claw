@@ -168,10 +168,9 @@ export async function createApp(): Promise<AppHandles> {
 	});
 
 	// Task source — the CSM's Cerebro work queue. Selection:
-	//   TASK_SOURCE=csp            → live CSP Task API (reuses CSP_BASE_URL/CSP_TOKEN)
-	//   TASK_SOURCE=stub           → in-memory demo queue (dev/demo)
-	//   TASK_API_BASE_URL set       → standalone task backend (not yet bound)
-	//   neither                     → task iteration skipped (logged)
+	//   TASK_SOURCE=csp   → live CSP Task API (reuses CSP_BASE_URL/CSP_TOKEN)
+	//   TASK_SOURCE=stub  → in-memory demo queue (dev/demo)
+	//   unset             → task iteration skipped (logged)
 	let taskSource: TaskSource | null = null;
 	if (config.taskSource === "csp") {
 		if (process.env.CSP_TOKEN) {
@@ -188,12 +187,6 @@ export async function createApp(): Promise<AppHandles> {
 	} else if (config.taskSource === "stub") {
 		taskSource = new StubTaskSource();
 		console.log("[tasks] Using StubTaskSource (in-memory demo queue)");
-	} else if (config.taskApiBaseUrl) {
-		// A standalone (non-CSP) task backend would bind here behind the same
-		// TaskSource interface.
-		console.warn(
-			`[tasks] TASK_API_BASE_URL set (${config.taskApiBaseUrl}) but no standalone connector is bound — task iteration skipped. Use TASK_SOURCE=csp or =stub.`,
-		);
 	} else {
 		console.log("[tasks] No task source configured — task iteration skipped.");
 	}

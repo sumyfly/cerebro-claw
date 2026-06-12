@@ -119,11 +119,8 @@ export interface AccountSource {
 }
 
 /** Local store source: full context from SQLite, used in demo mode. */
-export function createLocalAccountSource(
-	store: MemoryStore,
-): AccountSource & { _store: MemoryStore } {
+export function createLocalAccountSource(store: MemoryStore): AccountSource {
 	return {
-		_store: store,
 		label: "local SQLite",
 		async list() {
 			const profiles = await store.listProfiles();
