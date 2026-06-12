@@ -176,9 +176,28 @@ export function createMcpHarnessHandler(opts: McpPipelineOptions) {
 			// can auto-stamp turnId/customerId/taskId/idempotencyKey on every
 			// record(). The tool's `idempotencyKey` extractor runs once here so
 			// it's available to the wrapped ledger throughout the call.
+			//
+			// Step 7: the observer (recent-tools feed + action observer) ALSO
+			// runs inside this frame. The action-observer auto-records ledger
+			// entries for CSP writes (csp_create_note etc.) whose tools don't
+			// touch the ledger themselves; those writes MUST inherit the turn
+			// scope, otherwise rows land without turn_id/customer_id and the
+			// dedup + capability audit lose half the trail. The tool metadata
+			// (name, blast_radius, idempotency_key) stays set through the
+			// observer call too so the wrapped ledger can stamp those fields.
 			const idempotencyKey = tool.idempotencyKey ? tool.idempotencyKey(args) : undefined;
 			const blastRadius = tool.blastRadius;
-			const runExecute = async () => tool.execute(args);
+			const runToolAndObserver = async () => {
+				const r = await tool.execute(args);
+				if (opts.onToolCall) {
+					try {
+						await opts.onToolCall(req.params.name, args, r);
+					} catch (err) {
+						console.error("[mcp] onToolCall observer failed:", err);
+					}
+				}
+				return r;
+			};
 			try {
 				const result = turn
 					? await currentTurn.run(turn, async () => {
@@ -188,21 +207,13 @@ export function createMcpHarnessHandler(opts: McpPipelineOptions) {
 								idempotencyKey,
 							});
 							try {
-								return await runExecute();
+								return await runToolAndObserver();
 							} finally {
 								setCurrentTool(turn, undefined);
 							}
 						})
-					: await runExecute();
+					: await runToolAndObserver();
 
-				// Step 7: observer fans out to recent-tools + action observer.
-				if (opts.onToolCall) {
-					try {
-						await opts.onToolCall(req.params.name, args, result);
-					} catch (err) {
-						console.error("[mcp] onToolCall observer failed:", err);
-					}
-				}
 				return {
 					content: [{ type: "text", text: result.content }],
 					isError: !result.success,

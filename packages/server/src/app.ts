@@ -17,7 +17,6 @@ import type {
 	TaskSource,
 	Verifier,
 } from "@cerebro-claw/shared";
-import { StubCustomerChannel, StubRenewalSource, StubTaskSource } from "@cerebro-claw/tools";
 import express, { type Express, type Request, type Response } from "express";
 import { createActionObserver } from "./action-observer.js";
 import type { AgentBackend } from "./agent-backend.js";
@@ -38,8 +37,8 @@ import { computeDigestCounts, digestHeadline } from "./digest.js";
 import { NotifyThenActDispatcher } from "./dispatcher.js";
 import { resolveOverrideFromStore } from "./engine/overrides.js";
 import { computeTriageScore, selectByTriage } from "./engine/triage.js";
+import cspConnector from "@cerebro-claw/csp-connector";
 import { ExtensionHost } from "./extension-host.js";
-import { loadExtensionsFromDir } from "./extension-loader.js";
 import { TurnRegistry, createMcpHarnessHandler, wrapLedgerForHarness } from "./harness/index.js";
 import { createMcpHandler } from "./mcp-server.js";
 import { errorHandler, notFoundHandler, requestLogger } from "./middleware.js";
@@ -118,25 +117,22 @@ export async function createApp(): Promise<AppHandles> {
 		);
 	}
 
-	// Customer channel — CSP-backed when CSP is configured: dispatched sends
-	// land in CSP as activities + notes (the system of record), not a log line.
-	// Stub otherwise (dev/tests). Other channels (email, SMS) drop in later by
-	// implementing CustomerChannel.
-	let customerChannel: CustomerChannel;
-	// CSP_MOCK runs (offline fixtures) must never fire real customer-facing
-	// writes — the mock transport only covers the csp-connector tools, not this
-	// channel, so mock mode falls back to the stub.
-	if (process.env.CSP_TOKEN && process.env.CSP_MOCK !== "1") {
-		customerChannel = new CspCustomerChannel({
-			baseUrl: process.env.CSP_BASE_URL ?? "http://localhost:5656",
-			token: process.env.CSP_TOKEN,
-			timeoutMs: process.env.CSP_TIMEOUT_MS ? Number(process.env.CSP_TIMEOUT_MS) : undefined,
-		});
-		console.log("[customer-channel] CSP-backed channel active (sends write to CSP)");
-	} else {
-		customerChannel = new StubCustomerChannel();
-		console.log("[customer-channel] STUB channel active — sends only log (set CSP_TOKEN for real)");
+	// Customer channel — CSP-backed only. Notify-then-act sends are real customer
+	// touches; we refuse to fall back to a logging stub on the production path so
+	// the agent can never pretend to deliver a message it never sent. CSP_TOKEN
+	// is required to boot the server; without it the operator should fix the env,
+	// not silently run on fake plumbing.
+	if (!process.env.CSP_TOKEN) {
+		throw new Error(
+			"[customer-channel] CSP_TOKEN is required. Set it in your env or via .env. The server does not run on stub channels.",
+		);
 	}
+	const customerChannel: CustomerChannel = new CspCustomerChannel({
+		baseUrl: process.env.CSP_BASE_URL ?? "http://localhost:5656",
+		token: process.env.CSP_TOKEN,
+		timeoutMs: process.env.CSP_TIMEOUT_MS ? Number(process.env.CSP_TIMEOUT_MS) : undefined,
+	});
+	console.log("[customer-channel] CSP-backed channel active (sends write to CSP)");
 
 	// Extension host — collects tools, channels, and event handlers
 	const host = new ExtensionHost({
@@ -167,54 +163,42 @@ export async function createApp(): Promise<AppHandles> {
 		},
 	});
 
-	// Task source — the CSM's Cerebro work queue. Selection:
-	//   TASK_SOURCE=csp   → live CSP Task API (reuses CSP_BASE_URL/CSP_TOKEN)
-	//   TASK_SOURCE=stub  → in-memory demo queue (dev/demo)
-	//   unset             → task iteration skipped (logged)
+	// Task source — the CSM's Cerebro work queue. Only CSP is supported. Unset =
+	// task sweep skipped (logged). No stub queue — the operator gets real CSP
+	// tasks or none.
 	let taskSource: TaskSource | null = null;
 	if (config.taskSource === "csp") {
-		if (process.env.CSP_TOKEN) {
-			taskSource = createCspTaskSource({
-				baseUrl: process.env.CSP_BASE_URL ?? "http://localhost:5656",
-				token: process.env.CSP_TOKEN,
-				scope: (process.env.TASK_SCOPE as "all" | "mine") ?? "all",
-				maxTasks: process.env.TASK_MAX ? Number(process.env.TASK_MAX) : undefined,
-			});
-			console.log(`[tasks] Using CspTaskSource (scope=${process.env.TASK_SCOPE ?? "all"})`);
-		} else {
-			console.warn("[tasks] TASK_SOURCE=csp but CSP_TOKEN is not set — task iteration skipped.");
-		}
-	} else if (config.taskSource === "stub") {
-		taskSource = new StubTaskSource();
-		console.log("[tasks] Using StubTaskSource (in-memory demo queue)");
+		taskSource = createCspTaskSource({
+			baseUrl: process.env.CSP_BASE_URL ?? "http://localhost:5656",
+			token: process.env.CSP_TOKEN, // guaranteed by the throw above
+			scope: (process.env.TASK_SCOPE as "all" | "mine") ?? "all",
+			maxTasks: process.env.TASK_MAX ? Number(process.env.TASK_MAX) : undefined,
+		});
+		console.log(`[tasks] Using CspTaskSource (scope=${process.env.TASK_SCOPE ?? "all"})`);
 	} else {
-		console.log("[tasks] No task source configured — task iteration skipped.");
+		console.log("[tasks] TASK_SOURCE not set to 'csp' — task sweep skipped.");
 	}
 
 	// Renewal source — upcoming/at-risk renewals as a first-class swept input.
-	//   RENEWAL_SOURCE=csp   → derive from accounts + per-account renewals (window-filtered)
-	//   RENEWAL_SOURCE=stub  → in-memory demo queue
-	//   unset                → renewal sweep skipped (logged)
+	// Only CSP is supported; needs CSP_CSM_EMAIL on top of CSP_TOKEN. Unset =
+	// renewal sweep skipped.
 	let renewalSource: RenewalSource | null = null;
 	if (config.renewalSource === "csp") {
-		if (process.env.CSP_TOKEN && process.env.CSP_CSM_EMAIL) {
+		if (process.env.CSP_CSM_EMAIL) {
 			renewalSource = createCspRenewalSource({
 				baseUrl: process.env.CSP_BASE_URL ?? "http://localhost:5656",
-				token: process.env.CSP_TOKEN,
+				token: process.env.CSP_TOKEN, // guaranteed by the throw above
 				csmEmail: process.env.CSP_CSM_EMAIL,
 				windowDays: config.renewalWindowDays,
 			});
 			console.log(`[renewals] Using CspRenewalSource (window=${config.renewalWindowDays}d)`);
 		} else {
 			console.warn(
-				"[renewals] RENEWAL_SOURCE=csp but CSP_TOKEN/CSP_CSM_EMAIL not set — renewal sweep skipped.",
+				"[renewals] RENEWAL_SOURCE=csp but CSP_CSM_EMAIL not set — renewal sweep skipped.",
 			);
 		}
-	} else if (config.renewalSource === "stub") {
-		renewalSource = new StubRenewalSource();
-		console.log("[renewals] Using StubRenewalSource (in-memory demo queue)");
 	} else {
-		console.log("[renewals] No renewal source configured — renewal sweep skipped.");
+		console.log("[renewals] RENEWAL_SOURCE not set to 'csp' — renewal sweep skipped.");
 	}
 
 	// Verifier (critic) — gates notify-then-act / escalate before they commit.
@@ -228,8 +212,10 @@ export async function createApp(): Promise<AppHandles> {
 		.filter(Boolean);
 	let verifier: Verifier | null = null;
 
-	// Load extensions: built-in first, then any from the extensions/ directory
-	const userExtensions = await loadExtensionsFromDir(config.extensionsDir);
+	// Register all extensions statically. They're all first-party — there is no
+	// third-party plugin surface, so a filesystem scanner would be ceremony for
+	// no payoff. If a future extension genuinely needs runtime discovery, add
+	// the loader back behind a real use case.
 	await host.load([
 		memoryToolsExtension,
 		createActionPolicyExtension({
@@ -257,7 +243,7 @@ export async function createApp(): Promise<AppHandles> {
 		// Task tools only register when a task source is configured.
 		...(taskSource ? [createTaskToolsExtension({ source: taskSource, ledger })] : []),
 		lark.extension,
-		...userExtensions,
+		cspConnector,
 	]);
 
 	// Recent tool-call feed (last 100) for the Skills tab's live activity panel.
@@ -345,10 +331,17 @@ export async function createApp(): Promise<AppHandles> {
 	}
 
 	// Router and brain loop (brain loop emits lifecycle events through the host).
-	// BRAIN_LOOP_ENABLED=false keeps the API/UI up without spawning agent cycles
-	// (useful for UI work, or running the dashboard against live data read-only).
+	// Auto-start is gated on `mode === "production"` AND BRAIN_LOOP_ENABLED!=false.
+	// Anything other than MODE=Production (including unset) keeps the loop off so
+	// dev never burns tokens in the background. Manual `POST /api/brain/cycle`
+	// still works in every mode.
 	const router = new Router(agent, { store });
-	const brainLoopEnabled = !/^(0|false|no)$/i.test(process.env.BRAIN_LOOP_ENABLED ?? "");
+	const brainLoopEnabled = config.brainLoopEnabled;
+	if (config.mode !== "production") {
+		console.log(
+			`[work-loop] MODE=${process.env.MODE || "(unset)"} — auto-start gated to MODE=Production. Trigger manually with POST /api/brain/cycle.`,
+		);
+	}
 
 	// Pick account source: CSP (live) when CSP_TOKEN + CSP_CSM_EMAIL are configured,
 	// otherwise fall back to the local SQLite store (demo / seed mode).

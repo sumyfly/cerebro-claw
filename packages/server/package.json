@@ -14,6 +14,7 @@
 	},
 	"dependencies": {
 		"@cerebro-claw/channel-lark": "workspace:*",
+		"@cerebro-claw/csp-connector": "workspace:*",
 		"@cerebro-claw/memory": "workspace:*",
 		"@cerebro-claw/shared": "workspace:*",
 		"@cerebro-claw/tools": "workspace:*",
