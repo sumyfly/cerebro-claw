@@ -338,6 +338,13 @@ export class SqliteActionLedger implements ActionLedger {
 		return this.get(id);
 	}
 
+	async countByTurn(turnId: string): Promise<number> {
+		const row = this.db
+			.prepare("SELECT COUNT(*) AS n FROM action_ledger WHERE turn_id = ?")
+			.get(turnId) as { n: number };
+		return row.n;
+	}
+
 	async hasOpenWork(customerId: string, taskId?: string): Promise<boolean> {
 		const row = taskId
 			? (this.db

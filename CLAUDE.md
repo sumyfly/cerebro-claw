@@ -59,12 +59,12 @@ Every call lands in the **action ledger** (SQLite `action_ledger` table). The di
 ├── packages/
 │   ├── shared/          # Types: Customer, MemoryStore, ActionLedger, CustomerChannel, TaskSource, ChannelAdapter, ExtensionAPI, ToolDefinition
 │   ├── memory/          # In-memory + SQLite implementations of MemoryStore and ActionLedger
-│   ├── tools/           # memory tools, message tools, bash tool, action-policy tools (act/notify/escalate/prep), task tools, StubCustomerChannel, StubTaskSource
+│   ├── tools/           # memory tools, bash tool, action-policy tools (act/notify/escalate/prep), task tools, situation tools, StubCustomerChannel, StubCsmChannel, StubTaskSource, StubRenewalSource, noop verifier
 │   ├── channel-lark/    # ChannelAdapter for Lark with card builder and HMAC signature verify
 │   ├── server/          # Express app, extension host, MCP server, brain loop, dispatcher, runtimes
 │   └── web/             # React + antd admin UI (Dashboard, Customers, Activity, Extensions)
 ├── extensions/
-│   ├── csp-connector/   # 9 csp_* tools (read + write-back) hitting cspapi.test.shub.us/api/v1
+│   ├── csp-connector/   # 10 csp_* tools (read + write-back) hitting cspapi.test.shub.us/api/v1
 │   └── sample-greeting/ # Demo extension showing the loader pattern
 ├── docs/
 │   ├── csm-ai-colleague-product-vision.md
@@ -84,7 +84,7 @@ The system is one crank turned each cycle: **Perceive → Decide → Act → Rem
 4. **Brain Loop** — runs `agent.prompt()` per account each cycle. Pluggable `AccountSource`: `createLocalAccountSource(store)` for demo seed, `createCspAccountSource({…})` to iterate the CSM's real CSP portfolio. A single cycle can also be run on demand via `POST /api/brain/cycle?limit=N` (`limit` caps per-sweep fan-out; omitted = 3, `0` = full) — used by the Settings page "RUN ONE CYCLE" button and for cheap testing while the interval loop is off.
 5. **Dispatcher** — polls the ledger every 60s for due notify-then-act entries and sends them through the registered `CustomerChannel`. Failures are recorded back to the ledger (status `failed`, surfaced in the digest).
 6. **Channel Layer** — `ChannelAdapter` for CSM-facing channels (Lark today). `CustomerChannel` for the agent's outbound path to customers (`StubCustomerChannel` today; email/SMS to drop in later).
-7. **Tool Layer** — every tool is a `ToolDefinition { name, description, parameters (JSON Schema), execute }`. Categories: memory tools, action-policy tools (act/notify/escalate/prep/cancel/resolve), task tools (list/get/complete/block), message tools (legacy draft → CSP card flow), bash tool. External extensions add more (csp-connector adds 10).
+7. **Tool Layer** — every tool is a `ToolDefinition { name, description, parameters (JSON Schema), execute }`. Categories: memory tools, action-policy tools (act/notify/escalate/prep/cancel/resolve), task tools (list/get/complete/block), situation tools (open/advance/resolve), bash tool. External extensions add more (csp-connector adds 10).
 8. **Extension Layer** — `ExtensionHost` loads built-ins + any factory in `extensions/`. Extensions register tools, channels, lifecycle event handlers. Filesystem loader (`extension-loader.ts`) scans `EXTENSIONS_DIR` at boot.
 
 ## How the runtime works (no API key)

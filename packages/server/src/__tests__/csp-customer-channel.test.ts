@@ -109,13 +109,13 @@ describe("CspCustomerChannel", () => {
 			now: () => NOW,
 		});
 		const tick = await dispatcher.tick();
-		expect(tick).toEqual({ dispatched: 1, failed: 0 });
+		expect(tick).toEqual({ dispatched: 1, failed: 0, deadLettered: 0 });
 		const updated = await ledger.get(entry.id);
 		expect(updated?.status).toBe("executed");
 		expect(updated?.payload?.messageId).toBe("act-dispatch-1");
 	});
 
-	it("dispatcher.tick() marks the entry failed when the CSP write fails", async () => {
+	it("dispatcher.tick() dead-letters the entry when the CSP write fails past the retry budget", async () => {
 		mockCsp(() => ({ status: 502, body: { error: "bad gateway" } }));
 		const ledger = new InMemoryActionLedger();
 		const entry = await ledger.record({
@@ -128,15 +128,19 @@ describe("CspCustomerChannel", () => {
 			executeAt: new Date(NOW.getTime() - 60_000),
 			payload: { recipient: "alice@acme.com", text: "Hi Alice" },
 		});
+		// maxAttempts:1 collapses retry budget to a single attempt so one failed
+		// tick takes the row straight to dead-letter, instead of bouncing it back
+		// to in-flight for a future tick.
 		const dispatcher = new NotifyThenActDispatcher({
 			ledger,
 			customerChannel: channel(),
 			now: () => NOW,
+			maxAttempts: 1,
 		});
 		const tick = await dispatcher.tick();
-		expect(tick).toEqual({ dispatched: 0, failed: 1 });
+		expect(tick).toEqual({ dispatched: 0, failed: 0, deadLettered: 1 });
 		const updated = await ledger.get(entry.id);
-		expect(updated?.status).toBe("failed");
+		expect(updated?.status).toBe("dead-letter");
 		expect(updated?.note).toContain("HTTP 502");
 	});
 

@@ -59,7 +59,7 @@ describe("NotifyThenActDispatcher", () => {
 		expect(dispatched).toBe(0);
 	});
 
-	it("marks entry failed when the customer channel throws", async () => {
+	it("retries with backoff when the customer channel throws", async () => {
 		const failingChannel: CustomerChannel = {
 			id: "failing",
 			send: vi.fn().mockRejectedValue(new Error("smtp 550")),
@@ -78,15 +78,49 @@ describe("NotifyThenActDispatcher", () => {
 			customerChannel: failingChannel,
 			now: () => now,
 		});
-		const { dispatched, failed } = await d.tick();
+		const { dispatched, failed, deadLettered } = await d.tick();
 		expect(dispatched).toBe(0);
 		expect(failed).toBe(1);
+		expect(deadLettered).toBe(0);
 		const updated = await ledger.get(entry.id);
-		expect(updated?.status).toBe("failed");
+		// Under the default retry budget (3), one failure bounces back to in-flight
+		// with a fresh execute_at — not the v1 "permanently failed" status.
+		expect(updated?.status).toBe("in-flight");
+		expect(updated?.note).toContain("smtp 550");
+		expect(updated?.note).toMatch(/Retrying at/);
+		expect(updated?.executeAt!.getTime()).toBeGreaterThan(now.getTime());
+	});
+
+	it("dead-letters when the retry budget is exhausted", async () => {
+		const failingChannel: CustomerChannel = {
+			id: "failing",
+			send: vi.fn().mockRejectedValue(new Error("smtp 550")),
+		};
+		const entry = await ledger.record({
+			band: "notify-then-act",
+			customerId: "biz-1",
+			summary: "send",
+			reason: "y",
+			status: "in-flight",
+			executeAt: new Date("2026-05-29T11:00:00Z"),
+			payload: { recipient: "a@b.com", text: "x" },
+		});
+		const d = new NotifyThenActDispatcher({
+			ledger,
+			customerChannel: failingChannel,
+			now: () => now,
+			maxAttempts: 1, // one attempt = budget exhausted on first failure
+		});
+		const { dispatched, failed, deadLettered } = await d.tick();
+		expect(dispatched).toBe(0);
+		expect(failed).toBe(0);
+		expect(deadLettered).toBe(1);
+		const updated = await ledger.get(entry.id);
+		expect(updated?.status).toBe("dead-letter");
 		expect(updated?.note).toContain("smtp 550");
 	});
 
-	it("marks entry failed when payload is incomplete", async () => {
+	it("retries with backoff when payload is incomplete", async () => {
 		const entry = await ledger.record({
 			band: "notify-then-act",
 			customerId: "biz-1",
@@ -101,12 +135,14 @@ describe("NotifyThenActDispatcher", () => {
 			customerChannel: channel,
 			now: () => now,
 		});
-		const { dispatched, failed } = await d.tick();
+		const { dispatched, failed, deadLettered } = await d.tick();
 		expect(dispatched).toBe(0);
 		expect(failed).toBe(1);
+		expect(deadLettered).toBe(0);
 		const updated = await ledger.get(entry.id);
-		expect(updated?.status).toBe("failed");
+		expect(updated?.status).toBe("in-flight");
 		expect(updated?.note).toMatch(/payload missing/);
+		expect(updated?.note).toMatch(/Retrying at/);
 	});
 
 	it("does not double-fire when ticks overlap", async () => {

@@ -276,7 +276,7 @@ export class ClaudeCodeRuntime implements AgentBackend {
 				if (sessionId && newSessionId) {
 					this.sessions.set(sessionId, newSessionId);
 				}
-				resolve({ text: responseText.trim(), toolCalls: [] });
+				resolve({ text: responseText.trim(), toolCalls: [], turnId });
 			});
 		});
 	}

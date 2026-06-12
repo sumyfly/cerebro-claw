@@ -119,11 +119,8 @@ export interface AccountSource {
 }
 
 /** Local store source: full context from SQLite, used in demo mode. */
-export function createLocalAccountSource(
-	store: MemoryStore,
-): AccountSource & { _store: MemoryStore } {
+export function createLocalAccountSource(store: MemoryStore): AccountSource {
 	return {
-		_store: store,
 		label: "local SQLite",
 		async list() {
 			const profiles = await store.listProfiles();
@@ -695,10 +692,9 @@ ${TASK_GUIDANCE}`;
 			const response = await this.agent.prompt(prompt, undefined, `brain:task:${task.id}`, {
 				subject: { kind: "task", taskId: task.id, accountId: full?.businessId ?? undefined },
 			});
-			if (response.toolCalls.length > 0) {
-				console.log(`[work-loop] task ${task.id}: ${response.toolCalls.length} actions taken`);
-			}
-			return response.toolCalls.length;
+			const taken = await this.countActions(response);
+			if (taken > 0) console.log(`[work-loop] task ${task.id}: ${taken} actions taken`);
+			return taken;
 		} catch (err) {
 			const detail = err instanceof Error ? err.message : String(err);
 			console.error(`[work-loop] Error evaluating task ${task.id}: ${detail}`);
@@ -769,10 +765,9 @@ ${RENEWAL_GUIDANCE}`;
 			const response = await this.agent.prompt(prompt, undefined, `brain:renewal:${id}`, {
 				subject: { kind: "renewal", renewalId: id, accountId: full.businessId },
 			});
-			if (response.toolCalls.length > 0) {
-				console.log(`[work-loop] renewal ${id}: ${response.toolCalls.length} actions taken`);
-			}
-			return response.toolCalls.length;
+			const taken = await this.countActions(response);
+			if (taken > 0) console.log(`[work-loop] renewal ${id}: ${taken} actions taken`);
+			return taken;
 		} catch (err) {
 			const detail = err instanceof Error ? err.message : String(err);
 			console.error(`[work-loop] Error evaluating renewal ${id}: ${detail}`);
@@ -795,10 +790,9 @@ If nothing needs doing, say "No action needed for ${companyName}." and move on.`
 			const response = await this.agent.prompt(prompt, undefined, `brain:${customerId}`, {
 				subject: { kind: "account", accountId: customerId },
 			});
-			if (response.toolCalls.length > 0) {
-				console.log(`[work-loop] ${companyName}: ${response.toolCalls.length} actions taken`);
-			}
-			return response.toolCalls.length;
+			const taken = await this.countActions(response);
+			if (taken > 0) console.log(`[work-loop] ${companyName}: ${taken} actions taken`);
+			return taken;
 		} catch (err) {
 			const detail = err instanceof Error ? err.message : String(err);
 			console.error(`[work-loop] Error evaluating ${companyName}: ${detail}`);
@@ -807,5 +801,24 @@ If nothing needs doing, say "No action needed for ${companyName}." and move on.`
 			// Persist this cycle's signal snapshot exactly once, after the review.
 			await this.source.onEvaluated?.(customerId);
 		}
+	}
+
+	/**
+	 * How many band-actions an agent turn produced. Ledger count by turn_id is
+	 * the truth (the harness stamps it on every record). Falls back to the
+	 * runtime's `toolCalls.length` when no turn id was returned (legacy / chat).
+	 */
+	private async countActions(response: {
+		turnId?: string;
+		toolCalls: { toolName: string }[];
+	}): Promise<number> {
+		if (response.turnId && this.ledger) {
+			try {
+				return await this.ledger.countByTurn(response.turnId);
+			} catch (err) {
+				console.error(`[work-loop] countByTurn failed: ${(err as Error).message}`);
+			}
+		}
+		return response.toolCalls.length;
 	}
 }

@@ -161,4 +161,12 @@ export class InMemoryActionLedger implements ActionLedger {
 		}
 		return false;
 	}
+
+	async countByTurn(turnId: string): Promise<number> {
+		let n = 0;
+		for (const e of this.entries.values()) {
+			if (e.turnId === turnId) n += 1;
+		}
+		return n;
+	}
 }

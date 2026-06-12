@@ -211,4 +211,11 @@ export interface ActionLedger {
 	 * `taskId` narrows the check; omit to check customer-wide.
 	 */
 	hasOpenWork(customerId: string, taskId?: string): Promise<boolean>;
+
+	/**
+	 * How many ledger rows this agent turn produced — the brain loop's "actions
+	 * taken" counter. Replaces a stale tool-call count from the runtime stream
+	 * parser (which never wired up tool_use blocks, so it always returned 0).
+	 */
+	countByTurn(turnId: string): Promise<number>;
 }

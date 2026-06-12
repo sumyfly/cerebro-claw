@@ -111,6 +111,7 @@ export function wrapLedgerForHarness(ledger: ActionLedger): ActionLedger {
 		listRecentByCustomer: (cid, limit) => ledger.listRecentByCustomer(cid, limit),
 		claimForDispatch: (id, now, workerId) => ledger.claimForDispatch(id, now, workerId),
 		hasOpenWork: (cid, tid) => ledger.hasOpenWork(cid, tid),
+		countByTurn: (tid) => ledger.countByTurn(tid),
 	};
 }
 
