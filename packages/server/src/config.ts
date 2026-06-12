@@ -43,9 +43,9 @@ export interface ServerConfig {
 	taskApiToken: string;
 	/** CSM identity passed to the task backend (email/id). */
 	taskCsmEmail: string;
-	/** Force the in-memory StubTaskSource ("stub") regardless of TASK_API_*. Dev/demo. */
+	/** Task input selection: "csp" (live, reuses CSP_*) / unset = task sweep skipped. */
 	taskSource: string;
-	/** Renewal input selection: "csp" (live, reuses CSP_*) / "stub" / unset = renewal sweep skipped. */
+	/** Renewal input selection: "csp" (live, reuses CSP_*) / unset = renewal sweep skipped. */
 	renewalSource: string;
 	/** Only sweep renewals due within this many days (or at-risk). Default 90 (T-90 onward). */
 	renewalWindowDays: number;
