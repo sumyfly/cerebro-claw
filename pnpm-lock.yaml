@@ -34,6 +34,19 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/csp-connector:
+    dependencies:
+      '@cerebro-claw/shared':
+        specifier: workspace:*
+        version: link:../shared
+    devDependencies:
+      '@types/node':
+        specifier: ^25.9.1
+        version: 25.9.1
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/memory:
     dependencies:
       '@cerebro-claw/shared':
@@ -58,6 +71,9 @@ importers:
       '@cerebro-claw/channel-lark':
         specifier: workspace:*
         version: link:../channel-lark
+      '@cerebro-claw/csp-connector':
+        specifier: workspace:*
+        version: link:../csp-connector
       '@cerebro-claw/memory':
         specifier: workspace:*
         version: link:../memory

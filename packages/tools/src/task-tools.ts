@@ -9,7 +9,7 @@ import type {
 /**
  * Context the task tools need.
  *
- * - source: the pluggable task backend (StubTaskSource in dev/tests).
+ * - source: the pluggable task backend (CspTaskSource in prod; eval scenarios may inject their own).
  * - ledger: every task completion/block lands here, tagged with the task id, so
  *   the digest and dispatcher cover task work with no separate surface.
  * - now: clock — injectable for tests.

@@ -2,18 +2,34 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_ALLOWLIST } from "@cerebro-claw/tools";
 
+export type RunMode = "production" | "development";
+
 export interface ServerConfig {
+	/**
+	 * Deployment mode. Set via MODE env var, case-insensitive. Anything that
+	 * does not match /^production$/i is treated as development. The only
+	 * behavioral effect today: the interval-driven brain loop AUTO-START is
+	 * gated on `mode === "production"` — dev never burns tokens on its own.
+	 * Manual cycles (POST /api/brain/cycle) still work in every mode.
+	 */
+	mode: RunMode;
 	port: number;
 	larkAppId: string;
 	larkAppSecret: string;
 	brainLoopIntervalMs: number;
+	/**
+	 * Effective auto-start flag for the brain loop. True only when:
+	 *   - mode === "production"
+	 *   - AND BRAIN_LOOP_ENABLED is not explicitly set to false/0/no
+	 * Outside production this is always false regardless of BRAIN_LOOP_ENABLED.
+	 */
+	brainLoopEnabled: boolean;
 	/** Run a cycle immediately on boot. Default false — avoids a token tax on every dev restart. */
 	brainLoopRunOnStart: boolean;
 	model: string;
 	dbPath: string;
 	bashAllowlist: string[];
 	bashTimeoutMs: number;
-	extensionsDir: string;
 	adminToken: string;
 	larkVerificationToken: string;
 	claudeBinary: string;
@@ -26,9 +42,9 @@ export interface ServerConfig {
 	taskApiToken: string;
 	/** CSM identity passed to the task backend (email/id). */
 	taskCsmEmail: string;
-	/** Force the in-memory StubTaskSource ("stub") regardless of TASK_API_*. Dev/demo. */
+	/** Task input selection: "csp" (live, reuses CSP_*) / unset = task sweep skipped. */
 	taskSource: string;
-	/** Renewal input selection: "csp" (live, reuses CSP_*) / "stub" / unset = renewal sweep skipped. */
+	/** Renewal input selection: "csp" (live, reuses CSP_*) / unset = renewal sweep skipped. */
 	renewalSource: string;
 	/** Only sweep renewals due within this many days (or at-risk). Default 90 (T-90 onward). */
 	renewalWindowDays: number;
@@ -57,17 +73,27 @@ export function loadConfig(): ServerConfig {
 				.filter(Boolean)
 		: DEFAULT_ALLOWLIST;
 
+	const mode: RunMode = /^production$/i.test(process.env.MODE ?? "")
+		? "production"
+		: "development";
+	// BRAIN_LOOP_ENABLED keeps its old meaning as an opt-OUT inside production
+	// (set it to false to suppress auto-start even in prod). Dev mode forces it
+	// off — that's the safety the user asked for.
+	const brainLoopEnvAllow = !/^(0|false|no)$/i.test(process.env.BRAIN_LOOP_ENABLED ?? "");
+	const brainLoopEnabled = mode === "production" && brainLoopEnvAllow;
+
 	return {
+		mode,
 		port: Number(process.env.PORT ?? 5100),
 		larkAppId: process.env.LARK_APP_ID ?? "",
 		larkAppSecret: process.env.LARK_APP_SECRET ?? "",
 		brainLoopIntervalMs: Number(process.env.BRAIN_LOOP_INTERVAL_MS ?? 300_000),
+		brainLoopEnabled,
 		brainLoopRunOnStart: /^(1|true|yes)$/i.test(process.env.BRAIN_LOOP_RUN_ON_START ?? ""),
 		model: process.env.MODEL ?? "claude-sonnet-4-20250514",
 		dbPath: process.env.DB_PATH ?? join(homedir(), ".cerebro-claw", "data.db"),
 		bashAllowlist,
 		bashTimeoutMs: Number(process.env.BASH_TIMEOUT_MS ?? 30_000),
-		extensionsDir: process.env.EXTENSIONS_DIR ?? join(process.cwd(), "extensions"),
 		adminToken: process.env.ADMIN_TOKEN ?? "",
 		larkVerificationToken: process.env.LARK_VERIFICATION_TOKEN ?? "",
 		claudeBinary: process.env.CLAUDE_BINARY ?? "claude",

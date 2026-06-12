@@ -23,14 +23,51 @@ export interface CspRenewalSourceOptions {
 	now?: () => Date;
 }
 
+/**
+ * Field names that match CSP's real response (per the live API probe):
+ *   - `renewalPeriodEnd`  ISO date the contract period ends.
+ *   - `currentMrr`        monthly recurring revenue; ARR = currentMrr × 12.
+ *   - `probability`       deal probability 0-100 (or null); low values flag risk.
+ *   - `status`            NOT_STARTED | IN_PROGRESS | CLOSED_WON | CLOSED_LOST | ...
+ *
+ * There's no `atRisk` boolean — we derive it from `probability` (≤ 30 = at risk)
+ * since the engineered triage score cares about that signal.
+ */
 interface CspRenewalRow {
 	id?: string;
 	businessId?: string;
+	businessName?: string;
 	status?: string;
-	renewalDate?: string;
-	arr?: number;
-	atRisk?: boolean;
+	renewalPeriodEnd?: string;
+	currentMrr?: number;
+	probability?: number | null;
 	[k: string]: unknown;
+}
+
+/** Renewals in these statuses are still open work. Closed/lost are done. */
+const OPEN_RENEWAL_STATUSES = new Set([
+	"NOT_STARTED",
+	"IN_PROGRESS",
+	"AT_RISK",
+	"NEGOTIATING",
+	"PENDING",
+]);
+
+const AT_RISK_PROBABILITY_THRESHOLD = 30;
+
+/**
+ * Pull the renewal array out of the `/accounts/:id/renewals` response. CSP
+ * wraps it as `{renewals: [...], total, page, pageSize, hasMore}`. Tolerate
+ * a bare-array response too (older / mocked variants) so the sweep stays
+ * robust to upstream shape drift.
+ */
+function extractRenewalRows(payload: unknown): CspRenewalRow[] {
+	if (Array.isArray(payload)) return payload as CspRenewalRow[];
+	if (payload && typeof payload === "object") {
+		const wrapped = (payload as { renewals?: unknown }).renewals;
+		if (Array.isArray(wrapped)) return wrapped as CspRenewalRow[];
+	}
+	return [];
 }
 
 export function createCspRenewalSource(opts: CspRenewalSourceOptions): RenewalSource {
@@ -40,6 +77,13 @@ export function createCspRenewalSource(opts: CspRenewalSourceOptions): RenewalSo
 	const windowDays = opts.windowDays ?? 90;
 	const clock = () => opts.now?.() ?? new Date();
 
+	/**
+	 * Wraps a CSP GET and unwraps `body.data`. Failures (HTTP error, timeout,
+	 * malformed JSON) are LOGGED rather than swallowed — silent undefined was
+	 * what hid the earlier "renewals returned 0 inside the cycle" mystery; we
+	 * keep returning undefined so callers degrade, but the log line tells you
+	 * which path and why.
+	 */
 	async function getData<T = Record<string, unknown>>(path: string): Promise<T | undefined> {
 		const ac = new AbortController();
 		const t = setTimeout(() => ac.abort(), timeoutMs);
@@ -48,10 +92,16 @@ export function createCspRenewalSource(opts: CspRenewalSourceOptions): RenewalSo
 				headers: { Authorization: `Bearer ${opts.token}`, Accept: "application/json" },
 				signal: ac.signal,
 			});
-			if (!res.ok) return undefined;
+			if (!res.ok) {
+				console.error(`[csp-renewals] GET ${path} -> HTTP ${res.status}`);
+				return undefined;
+			}
 			const body = (await res.json()) as { data?: unknown };
 			return body.data as T;
-		} catch {
+		} catch (err) {
+			const e = err as Error & { name?: string };
+			const reason = e.name === "AbortError" ? `timeout after ${timeoutMs}ms` : e.message;
+			console.error(`[csp-renewals] GET ${path} failed: ${reason}`);
 			return undefined;
 		} finally {
 			clearTimeout(t);
@@ -59,19 +109,25 @@ export function createCspRenewalSource(opts: CspRenewalSourceOptions): RenewalSo
 	}
 
 	function toRecord(row: CspRenewalRow, accountName?: string): RenewalRecord {
-		const renewalDate = row.renewalDate ? new Date(row.renewalDate) : undefined;
+		const renewalDate = row.renewalPeriodEnd ? new Date(row.renewalPeriodEnd) : undefined;
 		const daysToRenewal = renewalDate
 			? Math.round((renewalDate.getTime() - clock().getTime()) / 86_400_000)
 			: undefined;
+		// ARR derived from MRR — CSP stores monthly only on the renewal record.
+		const arr = typeof row.currentMrr === "number" ? row.currentMrr * 12 : undefined;
+		// At-risk = low probability OR overdue (past the renewal date).
+		const atRisk =
+			(typeof row.probability === "number" && row.probability <= AT_RISK_PROBABILITY_THRESHOLD) ||
+			(daysToRenewal != null && daysToRenewal < 0);
 		return {
 			id: String(row.id),
 			businessId: String(row.businessId ?? ""),
-			customerName: accountName,
+			customerName: accountName ?? (typeof row.businessName === "string" ? row.businessName : undefined),
 			status: row.status,
 			renewalDate,
 			daysToRenewal,
-			arr: typeof row.arr === "number" ? row.arr : undefined,
-			atRisk: row.atRisk === true,
+			arr,
+			atRisk,
 			raw: row,
 		};
 	}
@@ -90,11 +146,27 @@ export function createCspRenewalSource(opts: CspRenewalSourceOptions): RenewalSo
 				(await getData<{ id: string; name: string }[]>(
 					`/api/v1/accounts?assignedCsmId=${encodeURIComponent(opts.csmEmail)}&limit=${maxAccounts}`,
 				)) ?? [];
+			if (accounts.length === 0) {
+				console.warn(
+					`[csp-renewals] listOpen: accounts endpoint returned 0 — check CSP_TOKEN / CSM email`,
+				);
+				return [];
+			}
 			const out: RenewalRecord[] = [];
 			for (const a of accounts) {
-				const rows = (await getData<CspRenewalRow[]>(`/api/v1/accounts/${a.id}/renewals`)) ?? [];
+				// CSP returns the renewals endpoint as a paginated wrapper:
+				//   { data: { renewals: [...], total, page, pageSize, hasMore } }
+				// not a bare array. Pull the array out; tolerate either shape so a
+				// future API tweak (or a different endpoint shape elsewhere) doesn't
+				// silently break the sweep.
+				const payload = await getData<unknown>(`/api/v1/accounts/${a.id}/renewals`);
+				const rows = extractRenewalRows(payload);
 				for (const row of rows) {
 					if (!row.id) continue;
+					// Drop terminally-closed renewals — CLOSED_WON / CLOSED_LOST are
+					// done work, not open work; surfacing them would re-action a
+					// completed renewal. Allowlist matches CSP's known open statuses.
+					if (row.status && !OPEN_RENEWAL_STATUSES.has(row.status)) continue;
 					const rec = toRecord({ ...row, businessId: row.businessId ?? a.id }, a.name);
 					if (inWindow(rec)) out.push(rec);
 				}
